@@ -194,6 +194,10 @@
            #:git-checkout
            #:git-merge
            #:git-delete-branch
+           #:git-fetch
+           #:git-remote-branches
+           #:git-track-remote-branch
+           #:git-delete-remote-branch
            #:git-squash-commits
            #:git-cherry-pick
            #:git-revert

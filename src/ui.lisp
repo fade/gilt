@@ -72,8 +72,8 @@
     (cursor-to row col)
     (princ char)))
 
-(defun draw-box (x y width height &key title (focused nil))
-  "Draw a box with optional title"
+(defun draw-box (x y width height &key title (focused nil) item-info)
+  "Draw a box with optional title and item count info (e.g., '2 of 3')"
   (let ((x2 (+ x width -1))
         (y2 (+ y height -1))
         (tl (box-char :top-left))
@@ -101,19 +101,50 @@
       (cursor-to row x2)
       (write-char vt *terminal-io*))
     (finish-output *terminal-io*)
-    ;; Bottom line
+    ;; Bottom line with item info (positioned on right side with padding)
     (cursor-to y2 x)
+    (if focused
+        (fg (color-code :bright-cyan))
+        (fg (color-code :white)))
     (write-char bl *terminal-io*)
-    (loop repeat (- width 2) do (write-char hz *terminal-io*))
+    (if item-info
+        ;; Draw with item info on right side, with 1 char border on each side
+        (let* ((info-str (format nil "~A" item-info))
+               (info-len (length info-str))
+               (right-padding 1)  ; 1 char border before corner
+               (left-border (- width 2 info-len right-padding)))
+          (loop repeat (max 0 left-border) do (write-char hz *terminal-io*))
+          (fg (color-code :bright-cyan))
+          (write-string info-str *terminal-io*)
+          (if focused
+              (fg (color-code :bright-cyan))
+              (fg (color-code :white)))
+          (loop repeat right-padding do (write-char hz *terminal-io*)))
+        ;; No item info - just draw border
+        (loop repeat (- width 2) do (write-char hz *terminal-io*)))
+    ;; Position explicitly for right corner to ensure alignment
+    (cursor-to y2 x2)
     (write-char br *terminal-io*)
     (finish-output *terminal-io*)
-    ;; Title
+    ;; Title - colorize only the title word, not the [N] prefix
     (when title
       (cursor-to y (+ x 2))
-      (if focused
-          (progn (bold) (fg (color-code :bright-white)))
-          (fg (color-code :white)))
-      (format *terminal-io* " ~A " title))
+      ;; Parse title to separate [N] prefix from actual title
+      (let* ((title-str (format nil " ~A " title))
+             ;; Find where the actual title starts (after [N] )
+             (bracket-end (position #\] title-str))
+             (prefix (if bracket-end (subseq title-str 0 (+ bracket-end 2)) ""))
+             (rest (if bracket-end (subseq title-str (+ bracket-end 2)) title-str)))
+        ;; Draw prefix in border color
+        (if focused
+            (fg (color-code :bright-cyan))
+            (fg (color-code :white)))
+        (write-string prefix *terminal-io*)
+        ;; Draw actual title in magenta (bold if focused)
+        (if focused
+            (progn (bold) (fg (color-code :bright-magenta)))
+            (fg (color-code :magenta)))
+        (write-string rest *terminal-io*)))
     (reset)
     (finish-output *terminal-io*)))
 
@@ -137,9 +168,12 @@
          (focused (panel-focused panel))
          (selected (panel-selected panel))
          (offset (panel-scroll-offset panel))
-         (content-width (- w 2)))
-    ;; Draw border
-    (draw-box x y w h :title (panel-title panel) :focused focused)
+         (content-width (- w 2))
+         (total-items (length (panel-items panel)))
+         (item-info (when (> total-items 0)
+                      (format nil "~D of ~D" (1+ selected) total-items))))
+    ;; Draw border with item count
+    (draw-box x y w h :title (panel-title panel) :focused focused :item-info item-info)
     ;; Draw items
     (loop for item in (panel-visible-items panel)
           for i from 0
@@ -153,9 +187,33 @@
              ;; Highlight selected item
              (when (and focused (= actual-index selected))
                (inverse))
-             ;; Render item (can be string or structured)
-             (let ((text (if (stringp item) item (format nil "~A" item))))
-               (draw-text row (+ x 1) text :max-width content-width))
+             ;; Render item - check for colored-item structure
+             (cond
+               ;; Multi-colored item: (:multi-colored (color1 text1) (color2 text2) ...)
+               ((and (consp item) (eq (car item) :multi-colored))
+                (let ((col (+ x 1))
+                      (remaining content-width))
+                  (dolist (segment (cdr item))
+                    (when (> remaining 0)
+                      (let* ((seg-color (first segment))
+                             (seg-text (second segment))
+                             (text-len (length seg-text))
+                             (display-text (if (> text-len remaining)
+                                               (subseq seg-text 0 remaining)
+                                               seg-text)))
+                        (fg (color-code seg-color))
+                        (write-string display-text *terminal-io*)
+                        (decf remaining (length display-text)))))))
+               ;; Single colored item: (:colored color text)
+               ((and (consp item) (eq (car item) :colored))
+                (let ((item-color (second item))
+                      (text (third item)))
+                  (fg (color-code item-color))
+                  (draw-text row (+ x 1) text :max-width content-width)))
+               ;; Plain text item
+               (t
+                (let ((text (if (stringp item) item (format nil "~A" item))))
+                  (draw-text row (+ x 1) text :max-width content-width))))
              (reset))
     (finish-output *terminal-io*)))
 

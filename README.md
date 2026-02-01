@@ -5,10 +5,11 @@ A LazyGit-style Git TUI written in Common Lisp.
 ## Features
 
 - **Pure ANSI rendering** - No ncurses dependency, direct terminal control
-- **LazyGit-inspired UI** - Familiar panel layout and keybindings
-- **Full color diffs** - 256-color and true-color support
+- **LazyGit-inspired UI** - Familiar 5-panel layout with colored output
+- **Full color diffs** - 256-color support with syntax highlighting
 - **Fast and responsive** - Lightweight terminal interface
 - **CLOS architecture** - Clean, extensible object-oriented design
+- **Comprehensive Git operations** - Stage, commit, push, pull, merge, cherry-pick, and more
 
 ## Requirements
 
@@ -42,83 +43,43 @@ Then run from anywhere:
 gilt
 ```
 
-### Development Setup
+## Quick Start
 
-Link to Quicklisp local-projects:
+1. Navigate to a Git repository
+2. Run `./gilt` (or `gilt` if installed)
+3. Use `j`/`k` to navigate, `Tab` to switch panels
+4. Press `Space` to stage files, `c` to commit
+5. Press `q` to quit
 
-```bash
-cd ~/quicklisp/local-projects
-ln -s /path/to/gilt .
-```
+## Documentation
 
-## Usage
+See **[GUIDE.md](GUIDE.md)** for the complete user guide including:
 
-### Run Executable
-
-```bash
-./gilt
-# or if installed:
-gilt
-```
-
-### From REPL (Development)
-
-```lisp
-(ql:quickload :gilt)
-(gilt:run)
-```
-
-### Makefile Targets
-
-| Target      | Description                          |
-|-------------|--------------------------------------|
-| `build`     | Build standalone executable          |
-| `run`       | Run from source (requires Quicklisp) |
-| `run-bin`   | Run the built executable             |
-| `install`   | Install to /usr/local/bin            |
-| `uninstall` | Remove from /usr/local/bin           |
-| `clean`     | Remove build artifacts               |
-| `repl`      | Start SBCL with gilt loaded          |
-| `check`     | Check if code compiles               |
-
-### Keybindings
-
-#### Global
-| Key | Action |
-|-----|--------|
-| `1` | Status view |
-| `2` | Log view |
-| `3` | Branches view |
-| `q` | Quit |
-
-#### Navigation
-| Key | Action |
-|-----|--------|
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
-| `Tab` | Switch panel |
-
-#### Status View
-| Key | Action |
-|-----|--------|
-| `Space` | Stage/unstage file |
-| `c` | Commit |
-| `r` | Refresh |
-
-#### Branches View
-| Key | Action |
-|-----|--------|
-| `Enter` | Checkout branch |
-| `n` | New branch |
+- Screen layout and panel descriptions
+- All keybindings
+- Common workflows (staging, committing, merging, squashing, etc.)
+- Troubleshooting tips
 
 ## Architecture
 
-- `ansi.lisp` - ANSI escape sequence library
-- `terminal.lisp` - Raw terminal input handling
-- `ui.lisp` - Panel and box drawing primitives
-- `git.lisp` - Git command interface
-- `views.lisp` - Main UI views (status, log, branches)
-- `main.lisp` - Application entry point
+| File | Description |
+|------|-------------|
+| `ansi.lisp` | ANSI escape sequence library |
+| `terminal.lisp` | Raw terminal input handling |
+| `ui.lisp` | Panel and dialog drawing |
+| `git.lisp` | Git command interface |
+| `views.lisp` | Main UI views |
+| `main.lisp` | Application entry point |
+
+## Makefile Targets
+
+| Target | Description |
+|--------|-------------|
+| `build` | Build standalone executable |
+| `install` | Install to /usr/local/bin |
+| `uninstall` | Remove from /usr/local/bin |
+| `clean` | Remove build artifacts |
+| `run` | Run from source |
 
 ## License
 

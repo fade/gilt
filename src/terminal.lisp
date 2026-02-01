@@ -219,9 +219,11 @@
        (cond
          ((= byte 13) (make-key-event :code +key-enter+))
          ((= byte 9) (make-key-event :code +key-tab+))
-         ((= byte 127) (make-key-event :code +key-backspace+))
-         ((= byte 8) (make-key-event :code +key-backspace+))  ; Some terminals send 8 for backspace
+         ((= byte 8) (make-key-event :code +key-backspace+))  ; Ctrl+H / backspace on some terminals
          (t (make-key-event :char (code-char (+ byte 96)) :ctrl-p t))))
+      ;; DEL character (127) - backspace on most terminals
+      ((= byte 127)
+       (make-key-event :code +key-backspace+))
       ;; Regular character
       (t
        (make-key-event :char (code-char byte))))))

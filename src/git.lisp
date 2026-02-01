@@ -320,6 +320,37 @@
   "Delete a branch"
   (git-run "branch" "-d" branch))
 
+(defun git-fetch (&optional remote)
+  "Fetch from remote (default: all remotes)"
+  (if remote
+      (git-run "fetch" remote)
+      (git-run "fetch" "--all")))
+
+(defun git-remote-branches ()
+  "Get list of remote branches"
+  (let ((output (git-run-lines "branch" "-r")))
+    (loop for line in output
+          for trimmed = (string-trim '(#\Space #\Tab) line)
+          when (and (> (length trimmed) 0)
+                    (not (search "->" trimmed)))  ; Skip HEAD pointer
+          collect trimmed)))
+
+(defun git-track-remote-branch (remote-branch)
+  "Create a local branch tracking a remote branch"
+  (let* ((parts (cl-ppcre:split "/" remote-branch :limit 2))
+         (local-name (if (> (length parts) 1)
+                         (second parts)
+                         remote-branch)))
+    (git-run "checkout" "-b" local-name "--track" remote-branch)))
+
+(defun git-delete-remote-branch (remote-branch)
+  "Delete a remote branch"
+  (let* ((parts (cl-ppcre:split "/" remote-branch :limit 2))
+         (remote (first parts))
+         (branch (second parts)))
+    (when (and remote branch)
+      (git-run "push" remote "--delete" branch))))
+
 ;;; Stash
 
 (defun git-stash ()

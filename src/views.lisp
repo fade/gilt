@@ -25,6 +25,19 @@
 (defgeneric refresh-data (view)
   (:documentation "Refresh data from git"))
 
+(defun show-status-message (message width height)
+  "Display a centered status message on screen"
+  (let* ((msg-len (length message))
+         (x (floor (- width msg-len) 2))
+         (y (floor height 2)))
+    (cursor-to y x)
+    (bg (color-code :bright-yellow))
+    (fg (color-code :black))
+    (bold)
+    (write-string (format nil " ~A " message) *terminal-io*)
+    (reset)
+    (finish-output *terminal-io*)))
+
 ;;; Helper to format panel title with number like LazyGit: [1] Status
 (defun numbered-title (num title &optional tabs)
   "Format panel title with number prefix and optional tabs"
@@ -57,7 +70,13 @@
    (screen-height :accessor screen-height :initform 24)
    ;; Hunk staging mode
    (hunk-list :accessor hunk-list :initform nil)
-   (hunk-mode :accessor hunk-mode :initform nil)))
+   (hunk-mode :accessor hunk-mode :initform nil)
+   ;; Spinner for fetch animation
+   (spinner-frame :accessor spinner-frame :initform 0)
+   (spinner-active :accessor spinner-active :initform nil)
+   ;; Remote branches
+   (remote-branch-list :accessor remote-branch-list :initform nil)
+   (show-remote-branches :accessor show-remote-branches :initform nil)))
 
 (defmethod initialize-instance :after ((view main-view) &key)
   ;; Create all panels
@@ -109,22 +128,34 @@
     (setf (panel-items (files-panel view))
           (loop for e in entries
                 collect (format-status-entry e))))
-  ;; Branches panel
-  (let ((branches (git-branches)))
+  ;; Branches panel - local or remote based on toggle
+  (let ((branches (git-branches))
+        (remote-branches (git-remote-branches)))
     (setf (branch-list view) branches)
-    (setf (panel-items (branches-panel view))
-          (loop for b in branches
-                collect (if (string= b (current-branch view))
-                            (format nil "* ~A" b)
-                            (format nil "  ~A" b)))))
-  ;; Commits panel
+    (setf (remote-branch-list view) remote-branches)
+    ;; Update panel title and items based on mode
+    (if (show-remote-branches view)
+        (progn
+          (setf (panel-title (branches-panel view))
+                (numbered-title 3 "Remotes" '("Local" "Tags")))
+          (setf (panel-items (branches-panel view))
+                (loop for b in remote-branches
+                      collect (list :colored :bright-cyan (format nil "  ~A" b)))))
+        (progn
+          (setf (panel-title (branches-panel view))
+                (numbered-title 3 "Local branches" '("Remotes" "Tags")))
+          (setf (panel-items (branches-panel view))
+                (loop for b in branches
+                      collect (if (string= b (current-branch view))
+                                  (list :colored :bright-green (format nil "* ~A" b))
+                                  (format nil "  ~A" b)))))))
+  ;; Commits panel - show hash (yellow), author initials, circle, and message
   (let ((commits (git-log :count 50)))
     (setf (commit-list view) commits)
     (setf (panel-items (commits-panel view))
           (loop for c in commits
-                collect (format nil "~A ~A"
-                                (log-entry-short-hash c)
-                                (log-entry-message c)))))
+                for i from 0
+                collect (format-commit-entry c (= i 0)))))
   ;; Stash panel
   (let ((stashes (git-stash-list)))
     (setf (stash-list view) stashes)
@@ -133,16 +164,55 @@
   (update-main-content view))
 
 (defun format-status-entry (entry)
-  "Format a status entry for display"
-  (format nil "~A ~A"
-          (case (status-entry-status entry)
-            (:modified "M")
-            (:added "A")
-            (:deleted "D")
-            (:untracked "?")
-            (:renamed "R")
-            (t " "))
-          (status-entry-file entry)))
+  "Format a status entry for display with color"
+  (let* ((status (status-entry-status entry))
+         (indicator (case status
+                      (:modified "M")
+                      (:added "A")
+                      (:deleted "D")
+                      (:untracked "?")
+                      (:renamed "R")
+                      (t " ")))
+         (color (case status
+                  (:modified :bright-yellow)
+                  (:added :bright-green)
+                  (:deleted :bright-red)
+                  (:untracked :bright-magenta)
+                  (:renamed :bright-cyan)
+                  (t :white)))
+         (text (format nil "~A ~A" indicator (status-entry-file entry))))
+    (list :colored color text)))
+
+(defun get-author-initials (author)
+  "Extract initials from author name (e.g., 'Glenn Thompson' -> 'GT')"
+  (if (and author (> (length author) 0))
+      (let* ((clean (string-trim '(#\Space #\Tab) author))
+             (parts (cl-ppcre:split "\\s+" clean)))
+        (if (> (length parts) 1)
+            ;; Multiple words - take first letter of each
+            (format nil "~{~A~}" 
+                    (loop for p in parts 
+                          when (> (length p) 0)
+                          collect (char-upcase (char p 0))))
+            ;; Single word - take first 2 chars
+            (string-upcase (subseq clean 0 (min 2 (length clean))))))
+      "??"))
+
+(defun format-commit-entry (commit is-head)
+  "Format a commit entry with colored hash, initials, and indicator"
+  ;; Format: hash initials ○ message
+  ;; The panel renderer will handle this as a multi-segment colored item
+  (let* ((hash (log-entry-short-hash commit))
+         (author (log-entry-author commit))
+         (initials (get-author-initials author))
+         (message (log-entry-message commit))
+         (indicator (if is-head "●" "○")))
+    ;; Return as colored segments list for rich rendering
+    (list :multi-colored
+          (list :bright-yellow hash)
+          (list :bright-cyan (format nil " ~A " initials))
+          (list :bright-green indicator)
+          (list :white (format nil " ~A" message)))))
 
 (defun update-main-content (view)
   "Update main panel based on focused panel and selection"
@@ -192,8 +262,8 @@
      '(("j/k" . "navigate") ("Space" . "stage/unstage") ("e" . "hunks") ("d" . "discard")
        ("s" . "stash") ("a" . "stage all") ("c" . "commit") ("P" . "push") ("q" . "quit")))
     (2 ; Branches panel
-     '(("j/k" . "navigate") ("Enter" . "checkout") ("n" . "new") ("M" . "merge")
-       ("D" . "delete") ("Tab" . "panels") ("q" . "quit")))
+     '(("j/k" . "navigate") ("Enter" . "checkout/track") ("n" . "new") ("f" . "fetch")
+       ("w" . "local/remote") ("M" . "merge") ("D" . "delete") ("q" . "quit")))
     (3 ; Commits panel
      '(("j/k" . "navigate") ("S" . "squash") ("C" . "cherry-pick") ("R" . "revert") ("q" . "quit")))
     (4 ; Stash panel
@@ -209,8 +279,8 @@
          (right-width (- width left-width))
          (usable-height (- height 1))  ; Leave 1 row for help bar
          (focused-idx (view-focused-panel view))
-         ;; Right side split: main panel gets most, cmdlog gets 5 rows
-         (cmdlog-height 5)
+         ;; Right side split: main panel gets most, cmdlog gets 9 rows
+         (cmdlog-height 9)
          (main-height (- usable-height cmdlog-height))
          ;; Base heights for left panels - small for unfocused, larger for focused
          (min-h 3)  ; Minimum height for collapsed panels
@@ -277,12 +347,30 @@
     (draw-panel (cmdlog-panel view))
     ;; Draw context-specific help bar at bottom
     (draw-help-bar height width (get-panel-help focused-idx))
+    ;; Draw spinner in bottom left if active
+    (when (spinner-active view)
+      (draw-spinner view height))
     ;; Store screen dimensions for dialogs
     (setf (screen-width view) width
           (screen-height view) height)
     ;; Draw active dialog on top if present
     (when (active-dialog view)
       (draw-dialog (active-dialog view) width height))))
+
+(defparameter *spinner-chars* '("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+  "Braille spinner animation frames")
+
+(defun draw-spinner (view row)
+  "Draw spinning fetch indicator in bottom left"
+  (cursor-to row 2)
+  (fg (color-code :bright-magenta))
+  (let ((frame (mod (spinner-frame view) (length *spinner-chars*))))
+    (write-string (nth frame *spinner-chars*) *terminal-io*)
+    (write-string " Fetching..." *terminal-io*))
+  (reset)
+  (finish-output *terminal-io*)
+  ;; Advance spinner frame
+  (incf (spinner-frame view)))
 
 (defmethod handle-key ((view main-view) key)
   ;; If dialog is active, ALL keys go to dialog - nothing else processes them
@@ -334,12 +422,16 @@
              ;; Push dialog
              ((string= (dialog-title dlg) "Push")
               (log-command view "git push")
+              (show-status-message "Pushing..." (screen-width view) (screen-height view))
               (git-push)
+              (log-command view "git push completed")
               (refresh-data view))
              ;; Pull dialog
              ((string= (dialog-title dlg) "Pull")
               (log-command view "git pull")
+              (show-status-message "Pulling..." (screen-width view) (screen-height view))
               (git-pull)
+              (log-command view "git pull completed")
               (refresh-data view))
              ;; Squash dialog
              ((string= (dialog-title dlg) "Squash Commits")
@@ -481,16 +573,27 @@
                      (git-stage-file (status-entry-file entry))))
                (refresh-data view)))))
        nil)
-      ;; Enter on branches - checkout
+      ;; Enter on branches - checkout local or track remote
       ((eq (key-event-code key) +key-enter+)
        (when (= focused-idx 2)  ; Branches panel
-         (let* ((branches (branch-list view))
-                (selected (panel-selected panel)))
-           (when (and branches (< selected (length branches)))
-             (let ((branch (nth selected branches)))
-               (log-command view (format nil "git checkout ~A" branch))
-               (git-checkout branch)
-               (refresh-data view)))))
+         (if (show-remote-branches view)
+             ;; Remote mode - track the remote branch
+             (let* ((branches (remote-branch-list view))
+                    (selected (panel-selected panel)))
+               (when (and branches (< selected (length branches)))
+                 (let ((branch (nth selected branches)))
+                   (log-command view (format nil "git checkout -b ... --track ~A" branch))
+                   (git-track-remote-branch branch)
+                   (setf (show-remote-branches view) nil)  ; Switch back to local
+                   (refresh-data view))))
+             ;; Local mode - checkout
+             (let* ((branches (branch-list view))
+                    (selected (panel-selected panel)))
+               (when (and branches (< selected (length branches)))
+                 (let ((branch (nth selected branches)))
+                   (log-command view (format nil "git checkout ~A" branch))
+                   (git-checkout branch)
+                   (refresh-data view))))))
        nil)
       ;; Refresh
       ((and (key-event-char key) (char= (key-event-char key) #\r))
@@ -557,6 +660,22 @@
                (make-dialog :title "New Branch"
                             :input-mode t
                             :buttons '("Create" "Cancel"))))
+       nil)
+      ;; Fetch - 'f' (when on branches panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\f))
+       (when (= focused-idx 2)  ; Branches panel
+         (log-command view "git fetch --all")
+         (show-status-message "Fetching..." (screen-width view) (screen-height view))
+         (git-fetch)
+         (log-command view "git fetch completed")
+         (refresh-data view))
+       nil)
+      ;; Toggle local/remote branches - 'w' (when on branches panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\w))
+       (when (= focused-idx 2)  ; Branches panel
+         (setf (show-remote-branches view) (not (show-remote-branches view)))
+         (setf (panel-selected (branches-panel view)) 0)  ; Reset selection
+         (refresh-data view))
        nil)
       ;; Merge - 'M' (capital, when on branches panel)
       ((and (key-event-char key) (char= (key-event-char key) #\M))
