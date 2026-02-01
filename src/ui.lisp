@@ -217,28 +217,35 @@
 (defclass dialog ()
   ((title :initarg :title :accessor dialog-title :initform "Dialog")
    (message :initarg :message :accessor dialog-message :initform nil)
-   (input-buffer :initarg :input-buffer :accessor dialog-input-buffer :initform "")
+   (input-lines :initarg :input-lines :accessor dialog-input-lines :initform (list ""))
+   (cursor-line :initarg :cursor-line :accessor dialog-cursor-line :initform 0)
    (buttons :initarg :buttons :accessor dialog-buttons :initform '("OK" "Cancel"))
    (selected-button :initarg :selected-button :accessor dialog-selected-button :initform 0)
-   (input-mode :initarg :input-mode :accessor dialog-input-mode :initform nil))
-  (:documentation "A simple modal dialog box"))
+   (input-mode :initarg :input-mode :accessor dialog-input-mode :initform nil)
+   (multiline :initarg :multiline :accessor dialog-multiline :initform nil)
+   (height :initarg :height :accessor dialog-height :initform 3))
+  (:documentation "A modal dialog box with optional multi-line input"))
 
-(defun make-dialog (&key title message (buttons '("OK" "Cancel")) input-mode)
+(defun make-dialog (&key title message (buttons '("OK" "Cancel")) input-mode multiline)
   "Create a dialog"
   (make-instance 'dialog
                  :title title
                  :message message
                  :buttons buttons
-                 :input-mode input-mode))
+                 :input-mode input-mode
+                 :multiline multiline
+                 :height (if multiline 12 3)))
 
 (defgeneric draw-dialog (dialog width height)
   (:documentation "Draw the dialog centered on screen"))
 
 (defmethod draw-dialog ((dlg dialog) screen-width screen-height)
-  "Draw a simple dialog box"
+  "Draw a dialog box - single or multi-line"
   (let* ((w (if (dialog-input-mode dlg) 70 45))
+         (h (dialog-height dlg))
          (x (floor (- screen-width w) 2))
-         (y (floor (- screen-height 3) 2)))
+         (y (floor (- screen-height h) 2))
+         (content-width (- w 2)))
     ;; Draw box with rounded corners
     (fg (color-code :bright-cyan))
     (bg (color-code 236))
@@ -255,61 +262,124 @@
     (let ((title-len (if (dialog-title dlg) (+ 2 (length (dialog-title dlg))) 0)))
       (loop repeat (- w 2 title-len) do (write-char (box-char :horizontal) *terminal-io*)))
     (write-char (box-char :top-right) *terminal-io*)
-    ;; Content row
-    (cursor-to (1+ y) x)
-    (write-char (box-char :vertical) *terminal-io*)
-    (bg (color-code 236))
-    (let ((content-width (- w 2)))  ; width between the two vertical borders
-      (if (dialog-input-mode dlg)
-          ;; Input mode: prompt and text field
-          (let* ((input-width (- content-width 4))  ; minus prompt " ❯ " and cursor
-                 (buf (dialog-input-buffer dlg))
-                 (display-buf (if (> (length buf) input-width)
-                                  (subseq buf (- (length buf) input-width))
-                                  buf))
-                 (padding (- input-width (length display-buf))))
-            (fg (color-code :bright-green))
-            (write-string " ❯ " *terminal-io*)
-            (fg (color-code :bright-white))
-            (write-string display-buf *terminal-io*)
-            (fg (color-code :bright-cyan))
-            (write-char #\▌ *terminal-io*)
-            (bg (color-code 236))
-            (loop repeat padding do (write-char #\Space *terminal-io*)))
-          ;; Confirmation mode: message and buttons
-          (let* ((msg (or (dialog-message dlg) ""))
-                 (buttons (dialog-buttons dlg))
-                 (btn-text (with-output-to-string (s)
-                             (loop for btn in buttons
-                                   for i from 0
-                                   do (format s " ~A  " btn))))
-                 (used (+ 4 (length msg) (length btn-text)))  ; " ? " + msg + buttons
-                 (padding (- content-width used)))
-            (fg (color-code :bright-green))
-            (write-string " ? " *terminal-io*)
-            (fg (color-code :bright-white))
-            (write-string msg *terminal-io*)
-            (write-char #\Space *terminal-io*)
-            ;; Buttons
-            (loop for btn in buttons
-                  for i from 0
-                  do
-                     (if (= i (dialog-selected-button dlg))
-                         (progn (bg (color-code :bright-cyan)) (fg (color-code :black)))
-                         (progn (bg (color-code 240)) (fg (color-code :bright-white))))
-                     (write-string (format nil " ~A " btn) *terminal-io*)
-                     (bg (color-code 236))
-                     (write-char #\Space *terminal-io*))
-            (loop repeat (max 0 padding) do (write-char #\Space *terminal-io*)))))
-    (fg (color-code :bright-cyan))
-    (write-char (box-char :vertical) *terminal-io*)
+    
+    (cond
+      ;; Multi-line input mode
+      ((and (dialog-input-mode dlg) (dialog-multiline dlg))
+       (let* ((num-lines (- h 3))  ; content rows (minus top, bottom, button row)
+              (text-width (- content-width 3)))  ; minus " ❯ " prompt
+         ;; Draw each input line
+         (loop for row from 0 below num-lines
+               for screen-row = (+ y 1 row)
+               do
+                  (cursor-to screen-row x)
+                  (write-char (box-char :vertical) *terminal-io*)
+                  (bg (color-code 236))
+                  ;; Prompt on first line only
+                  (if (= row 0)
+                      (progn (fg (color-code :bright-green)) (write-string " ❯ " *terminal-io*))
+                      (write-string "   " *terminal-io*))
+                  ;; Line content
+                  (fg (color-code :bright-white))
+                  (let* ((lines (dialog-input-lines dlg))
+                         (line-text (if (< row (length lines)) (nth row lines) ""))
+                         (display-text (if (> (length line-text) (1- text-width))
+                                           (subseq line-text 0 (1- text-width))
+                                           line-text)))
+                    (write-string display-text *terminal-io*)
+                    ;; Cursor on current line
+                    (if (= row (dialog-cursor-line dlg))
+                        (progn
+                          (fg (color-code :bright-cyan))
+                          (write-char #\▌ *terminal-io*)
+                          (bg (color-code 236))
+                          (loop repeat (- text-width (length display-text) 1) 
+                                do (write-char #\Space *terminal-io*)))
+                        (loop repeat (- text-width (length display-text)) 
+                              do (write-char #\Space *terminal-io*))))
+                  (fg (color-code :bright-cyan))
+                  (write-char (box-char :vertical) *terminal-io*))
+         ;; Button row
+         (cursor-to (+ y h -2) x)
+         (write-char (box-char :vertical) *terminal-io*)
+         (bg (color-code 236))
+         (write-char #\Space *terminal-io*)
+         (loop for btn in (dialog-buttons dlg)
+               for i from 0
+               do
+                  (if (= i (dialog-selected-button dlg))
+                      (progn (bg (color-code :bright-cyan)) (fg (color-code :black)))
+                      (progn (bg (color-code 240)) (fg (color-code :bright-white))))
+                  (write-string (format nil " ~A " btn) *terminal-io*)
+                  (bg (color-code 236))
+                  (write-char #\Space *terminal-io*))
+         (let* ((btn-width (+ (reduce #'+ (dialog-buttons dlg) :key #'length)
+                              (* 4 (length (dialog-buttons dlg)))))
+                (padding (- content-width btn-width 1)))
+           (loop repeat (max 0 padding) do (write-char #\Space *terminal-io*)))
+         (fg (color-code :bright-cyan))
+         (write-char (box-char :vertical) *terminal-io*)))
+      
+      ;; Single-line input mode
+      ((dialog-input-mode dlg)
+       (cursor-to (1+ y) x)
+       (write-char (box-char :vertical) *terminal-io*)
+       (bg (color-code 236))
+       (let* ((input-width (- content-width 4))
+              (lines (dialog-input-lines dlg))
+              (buf (if lines (first lines) ""))
+              (display-buf (if (> (length buf) input-width)
+                               (subseq buf (- (length buf) input-width))
+                               buf))
+              (padding (- input-width (length display-buf))))
+         (fg (color-code :bright-green))
+         (write-string " ❯ " *terminal-io*)
+         (fg (color-code :bright-white))
+         (write-string display-buf *terminal-io*)
+         (fg (color-code :bright-cyan))
+         (write-char #\▌ *terminal-io*)
+         (bg (color-code 236))
+         (loop repeat padding do (write-char #\Space *terminal-io*)))
+       (fg (color-code :bright-cyan))
+       (write-char (box-char :vertical) *terminal-io*))
+      
+      ;; Confirmation mode
+      (t
+       (cursor-to (1+ y) x)
+       (write-char (box-char :vertical) *terminal-io*)
+       (bg (color-code 236))
+       (let* ((msg (or (dialog-message dlg) ""))
+              (buttons (dialog-buttons dlg))
+              (btn-text (with-output-to-string (s)
+                          (loop for btn in buttons do (format s " ~A  " btn))))
+              (used (+ 4 (length msg) (length btn-text)))
+              (padding (- content-width used)))
+         (fg (color-code :bright-green))
+         (write-string " ? " *terminal-io*)
+         (fg (color-code :bright-white))
+         (write-string msg *terminal-io*)
+         (write-char #\Space *terminal-io*)
+         (loop for btn in buttons
+               for i from 0
+               do
+                  (if (= i (dialog-selected-button dlg))
+                      (progn (bg (color-code :bright-cyan)) (fg (color-code :black)))
+                      (progn (bg (color-code 240)) (fg (color-code :bright-white))))
+                  (write-string (format nil " ~A " btn) *terminal-io*)
+                  (bg (color-code 236))
+                  (write-char #\Space *terminal-io*))
+         (loop repeat (max 0 padding) do (write-char #\Space *terminal-io*)))
+       (fg (color-code :bright-cyan))
+       (write-char (box-char :vertical) *terminal-io*)))
+    
     ;; Bottom border with hint
-    (cursor-to (+ y 2) x)
+    (cursor-to (+ y h -1) x)
     (write-char (box-char :bottom-left) *terminal-io*)
-    (fg (color-code :white))  ; brighter hint text
-    (let* ((hint (if (dialog-input-mode dlg)
-                     " Enter:confirm Esc:cancel "
-                     " Tab:switch Enter:confirm Esc:cancel "))
+    (fg (color-code :white))
+    (let* ((hint (cond
+                   ((dialog-multiline dlg) " Tab:button Enter:newline Esc:cancel ")
+                   ((dialog-input-mode dlg) " Enter:confirm Esc:cancel ")
+                   (t " Tab:switch Enter:confirm Esc:cancel ")))
            (hint-len (length hint))
            (border-len (- w 2 hint-len)))
       (write-string hint *terminal-io*)
@@ -322,19 +392,60 @@
 (defgeneric handle-dialog-key (dialog key)
   (:documentation "Handle key input for dialog, returns :ok, :cancel, or nil"))
 
+(defun dialog-get-text (dlg)
+  "Get all text from dialog as single string (lines joined with newlines)"
+  (format nil "~{~A~^~%~}" (dialog-input-lines dlg)))
+
 (defmethod handle-dialog-key ((dlg dialog) key)
   "Handle key events for dialog"
   (cond
     ;; Escape - cancel
     ((eq (key-event-code key) +key-escape+)
      :cancel)
-    ;; Enter - confirm
+    ;; Tab - switch buttons (multiline mode)
+    ((and (dialog-multiline dlg)
+          (eq (key-event-code key) +key-tab+))
+     (setf (dialog-selected-button dlg)
+           (mod (1+ (dialog-selected-button dlg)) (length (dialog-buttons dlg))))
+     nil)
+    ;; Enter in multiline - check if Commit button selected, else new line
+    ((and (dialog-multiline dlg)
+          (eq (key-event-code key) +key-enter+))
+     (let ((btn (nth (dialog-selected-button dlg) (dialog-buttons dlg))))
+       (if (string= btn "Commit")
+           :ok  ; Commit button selected - confirm
+           ;; Add new line
+           (let* ((lines (dialog-input-lines dlg))
+                  (cur-line (dialog-cursor-line dlg))
+                  (max-lines (- (dialog-height dlg) 3)))
+             (when (< (length lines) max-lines)
+               (setf (dialog-input-lines dlg)
+                     (append (subseq lines 0 (1+ cur-line))
+                             (list "")
+                             (if (< (1+ cur-line) (length lines))
+                                 (subseq lines (1+ cur-line))
+                                 nil)))
+               (incf (dialog-cursor-line dlg)))
+             nil))))
+    ;; Enter - confirm (single-line or confirmation)
     ((eq (key-event-code key) +key-enter+)
      (if (dialog-input-mode dlg)
-         :ok  ; Input mode: Enter always confirms
+         :ok
          (let ((btn (nth (dialog-selected-button dlg) (dialog-buttons dlg))))
            (if (string= btn "Cancel") :cancel :ok))))
-    ;; Tab - switch buttons
+    ;; Up arrow in multiline
+    ((and (dialog-multiline dlg)
+          (eq (key-event-code key) +key-up+))
+     (when (> (dialog-cursor-line dlg) 0)
+       (decf (dialog-cursor-line dlg)))
+     nil)
+    ;; Down arrow in multiline
+    ((and (dialog-multiline dlg)
+          (eq (key-event-code key) +key-down+))
+     (when (< (dialog-cursor-line dlg) (1- (length (dialog-input-lines dlg))))
+       (incf (dialog-cursor-line dlg)))
+     nil)
+    ;; Tab - switch buttons (confirmation only)
     ((eq (key-event-code key) +key-tab+)
      (setf (dialog-selected-button dlg)
            (mod (1+ (dialog-selected-button dlg)) (length (dialog-buttons dlg))))
@@ -349,15 +460,27 @@
     ;; Backspace in input mode
     ((and (dialog-input-mode dlg)
           (eq (key-event-code key) +key-backspace+))
-     (let ((buf (dialog-input-buffer dlg)))
-       (when (> (length buf) 0)
-         (setf (dialog-input-buffer dlg) (subseq buf 0 (1- (length buf))))))
+     (let* ((lines (dialog-input-lines dlg))
+            (cur-line (dialog-cursor-line dlg))
+            (cur-text (nth cur-line lines)))
+       (if (> (length cur-text) 0)
+           ;; Delete char from current line
+           (setf (nth cur-line (dialog-input-lines dlg))
+                 (subseq cur-text 0 (1- (length cur-text))))
+           ;; At start of line - merge with previous if multiline
+           (when (and (dialog-multiline dlg) (> cur-line 0))
+             (setf (dialog-input-lines dlg)
+                   (append (subseq lines 0 cur-line)
+                           (subseq lines (1+ cur-line))))
+             (decf (dialog-cursor-line dlg)))))
      nil)
     ;; Character input
     ((and (dialog-input-mode dlg)
           (key-event-char key)
           (graphic-char-p (key-event-char key)))
-     (setf (dialog-input-buffer dlg)
-           (concatenate 'string (dialog-input-buffer dlg) (string (key-event-char key))))
+     (let* ((cur-line (dialog-cursor-line dlg))
+            (cur-text (nth cur-line (dialog-input-lines dlg))))
+       (setf (nth cur-line (dialog-input-lines dlg))
+             (concatenate 'string cur-text (string (key-event-char key)))))
      nil)
     (t nil)))

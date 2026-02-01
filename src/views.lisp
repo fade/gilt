@@ -283,10 +283,11 @@
          (let ((dlg (active-dialog view)))
            (cond
              ;; Commit dialog
-             ((string= (dialog-title dlg) "Commit")
-              (let ((msg (dialog-input-buffer dlg)))
+             ((string= (dialog-title dlg) "Commit Message")
+              (let ((msg (dialog-get-text dlg)))
                 (when (> (length msg) 0)
-                  (log-command view (format nil "git commit -m \"~A\"" msg))
+                  (log-command view (format nil "git commit -m \"~A\"" 
+                                            (first (dialog-input-lines dlg))))
                   (git-commit msg)
                   (refresh-data view))))
              ;; Push dialog
@@ -391,11 +392,13 @@
       ((and (key-event-char key) (char= (key-event-char key) #\r))
        (refresh-data view)
        nil)
-      ;; Commit - 'c' opens commit dialog
+      ;; Commit - 'c' opens commit dialog (multiline)
       ((and (key-event-char key) (char= (key-event-char key) #\c))
        (setf (active-dialog view)
-             (make-dialog :title "Commit"
-                          :input-mode t))
+             (make-dialog :title "Commit Message"
+                          :input-mode t
+                          :multiline t
+                          :buttons '("Commit" "Cancel")))
        nil)
       ;; Push - 'P' (capital) opens push confirmation
       ((and (key-event-char key) (char= (key-event-char key) #\P))
