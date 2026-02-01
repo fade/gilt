@@ -215,43 +215,31 @@
 ;;; Dialog class - Modal popup for user input
 
 (defclass dialog ()
-  ((x :initarg :x :accessor dialog-x :initform 10)
-   (y :initarg :y :accessor dialog-y :initform 5)
-   (width :initarg :width :accessor dialog-width :initform 50)
-   (height :initarg :height :accessor dialog-height :initform 3)
-   (title :initarg :title :accessor dialog-title :initform "Dialog")
+  ((title :initarg :title :accessor dialog-title :initform "Dialog")
    (message :initarg :message :accessor dialog-message :initform nil)
    (input-buffer :initarg :input-buffer :accessor dialog-input-buffer :initform "")
-   (input-label :initarg :input-label :accessor dialog-input-label :initform "")
    (buttons :initarg :buttons :accessor dialog-buttons :initform '("OK" "Cancel"))
    (selected-button :initarg :selected-button :accessor dialog-selected-button :initform 0)
-   (input-mode :initarg :input-mode :accessor dialog-input-mode :initform nil
-               :documentation "If t, dialog accepts text input"))
-  (:documentation "A modal dialog box for user interaction"))
+   (input-mode :initarg :input-mode :accessor dialog-input-mode :initform nil))
+  (:documentation "A simple modal dialog box"))
 
-(defun make-dialog (&key title message input-label (buttons '("OK" "Cancel")) input-mode (width nil))
-  "Create a dialog centered on screen"
+(defun make-dialog (&key title message (buttons '("OK" "Cancel")) input-mode)
+  "Create a dialog"
   (make-instance 'dialog
                  :title title
                  :message message
-                 :input-label input-label
                  :buttons buttons
-                 :input-mode input-mode
-                 :width (or width (if input-mode 80 40))
-                 :height (if input-mode 3 5)))
+                 :input-mode input-mode))
 
 (defgeneric draw-dialog (dialog width height)
   (:documentation "Draw the dialog centered on screen"))
 
 (defmethod draw-dialog ((dlg dialog) screen-width screen-height)
-  "Draw a compact terminal-style dialog"
-  (let* ((w (dialog-width dlg))
-         (h (dialog-height dlg))
+  "Draw a simple dialog box"
+  (let* ((w (if (dialog-input-mode dlg) 70 50))
+         (h 3)
          (x (floor (- screen-width w) 2))
          (y (floor (- screen-height h) 2)))
-    ;; Update position
-    (setf (dialog-x dlg) x
-          (dialog-y dlg) y)
     ;; Draw box with rounded corners
     (fg (color-code :bright-cyan))
     (bg (color-code 236))
@@ -266,15 +254,15 @@
       (fg (color-code :bright-cyan))
       (bg (color-code 236)))
     (let ((title-len (if (dialog-title dlg) (+ 3 (length (dialog-title dlg))) 0)))
-      (loop repeat (- w 2 title-len) do (write-char (box-char :horizontal) *terminal-io*)))
+      (loop repeat (max 0 (- w 2 title-len)) do (write-char (box-char :horizontal) *terminal-io*)))
     (write-char (box-char :top-right) *terminal-io*)
-    ;; Content row(s)
+    ;; Content row
+    (cursor-to (1+ y) x)
+    (write-char (box-char :vertical) *terminal-io*)
+    (bg (color-code 236))
     (if (dialog-input-mode dlg)
-        ;; Input mode: single line with prompt and input field
+        ;; Input mode: prompt and text field
         (progn
-          (cursor-to (1+ y) x)
-          (write-char (box-char :vertical) *terminal-io*)
-          (bg (color-code 236))
           (fg (color-code :bright-green))
           (write-string " ❯ " *terminal-io*)
           (fg (color-code :bright-white))
@@ -284,69 +272,46 @@
                                   (subseq buf (- (length buf) input-width))
                                   buf)))
             (write-string display-buf *terminal-io*)
-            ;; Cursor indicator
             (fg (color-code :bright-cyan))
             (write-char #\▌ *terminal-io*)
             (fg (color-code :white))
-            (loop repeat (- input-width (length display-buf) 1)
-                  do (write-char #\Space *terminal-io*)))
-          (fg (color-code :bright-cyan))
-          (write-char (box-char :vertical) *terminal-io*))
+            (loop repeat (max 0 (- input-width (length display-buf) 1))
+                  do (write-char #\Space *terminal-io*))))
         ;; Confirmation mode: message and buttons
         (progn
-          ;; Message row
-          (cursor-to (1+ y) x)
-          (write-char (box-char :vertical) *terminal-io*)
-          (bg (color-code 236))
+          (fg (color-code :bright-green))
+          (write-string " ? " *terminal-io*)
           (fg (color-code :white))
           (let ((msg (or (dialog-message dlg) "")))
-            (write-char #\Space *terminal-io*)
             (write-string msg *terminal-io*)
-            (loop repeat (- w 3 (length msg)) do (write-char #\Space *terminal-io*)))
-          (fg (color-code :bright-cyan))
-          (write-char (box-char :vertical) *terminal-io*)
-          ;; Empty row
-          (cursor-to (+ y 2) x)
-          (write-char (box-char :vertical) *terminal-io*)
-          (bg (color-code 236))
-          (loop repeat (- w 2) do (write-char #\Space *terminal-io*))
-          (fg (color-code :bright-cyan))
-          (write-char (box-char :vertical) *terminal-io*)
-          ;; Buttons row
-          (cursor-to (+ y 3) x)
-          (write-char (box-char :vertical) *terminal-io*)
-          (bg (color-code 236))
-          (write-char #\Space *terminal-io*)
+            (write-string "  " *terminal-io*))
+          ;; Buttons
           (let ((buttons (dialog-buttons dlg)))
             (loop for btn in buttons
                   for i from 0
                   do
                      (if (= i (dialog-selected-button dlg))
-                         (progn
-                           (bg (color-code :bright-cyan))
-                           (fg (color-code :black)))
-                         (progn
-                           (bg (color-code :bright-black))
-                           (fg (color-code :white))))
+                         (progn (bg (color-code :bright-cyan)) (fg (color-code :black)))
+                         (progn (bg (color-code :bright-black)) (fg (color-code :white))))
                      (write-string (format nil " ~A " btn) *terminal-io*)
                      (bg (color-code 236))
                      (write-char #\Space *terminal-io*))
-            (let ((btn-width (+ (reduce #'+ buttons :key #'length)
-                                (* 4 (length buttons)))))
-              (loop repeat (- w 3 btn-width) do (write-char #\Space *terminal-io*))))
-          (fg (color-code :bright-cyan))
-          (write-char (box-char :vertical) *terminal-io*)))
-    ;; Bottom border
-    (cursor-to (+ y h) x)
+            (let* ((msg (or (dialog-message dlg) ""))
+                   (btn-width (+ (reduce #'+ buttons :key #'length) (* 4 (length buttons))))
+                   (used (+ 6 (length msg) btn-width)))
+              (loop repeat (max 0 (- w 1 used)) do (write-char #\Space *terminal-io*))))))
+    (fg (color-code :bright-cyan))
+    (write-char (box-char :vertical) *terminal-io*)
+    ;; Bottom border with hint
+    (cursor-to (+ y 2) x)
     (write-char (box-char :bottom-left) *terminal-io*)
+    (fg (color-code :bright-black))
     (if (dialog-input-mode dlg)
-        ;; Show hint for input mode
-        (progn
-          (fg (color-code :bright-black))
-          (write-string " Enter:confirm Esc:cancel " *terminal-io*)
-          (fg (color-code :bright-cyan))
-          (loop repeat (- w 28) do (write-char (box-char :horizontal) *terminal-io*)))
-        (loop repeat (- w 2) do (write-char (box-char :horizontal) *terminal-io*)))
+        (write-string " Enter:confirm Esc:cancel " *terminal-io*)
+        (write-string " Tab:switch Enter:confirm Esc:cancel " *terminal-io*))
+    (fg (color-code :bright-cyan))
+    (let ((hint-len (if (dialog-input-mode dlg) 26 38)))
+      (loop repeat (max 0 (- w 2 hint-len)) do (write-char (box-char :horizontal) *terminal-io*)))
     (write-char (box-char :bottom-right) *terminal-io*)
     (reset)
     (finish-output *terminal-io*)))
@@ -362,13 +327,19 @@
      :cancel)
     ;; Enter - confirm
     ((eq (key-event-code key) +key-enter+)
-     (if (string= (nth (dialog-selected-button dlg) (dialog-buttons dlg)) "Cancel")
-         :cancel
-         :ok))
-    ;; Tab or arrow keys - switch buttons
-    ((or (eq (key-event-code key) +key-tab+)
-         (eq (key-event-code key) +key-left+)
-         (eq (key-event-code key) +key-right+))
+     (if (dialog-input-mode dlg)
+         :ok  ; Input mode: Enter always confirms
+         (let ((btn (nth (dialog-selected-button dlg) (dialog-buttons dlg))))
+           (if (string= btn "Cancel") :cancel :ok))))
+    ;; Tab - switch buttons
+    ((eq (key-event-code key) +key-tab+)
+     (setf (dialog-selected-button dlg)
+           (mod (1+ (dialog-selected-button dlg)) (length (dialog-buttons dlg))))
+     nil)
+    ;; Left/Right - switch buttons (confirmation only)
+    ((and (not (dialog-input-mode dlg))
+          (or (eq (key-event-code key) +key-left+)
+              (eq (key-event-code key) +key-right+)))
      (setf (dialog-selected-button dlg)
            (mod (1+ (dialog-selected-button dlg)) (length (dialog-buttons dlg))))
      nil)
@@ -379,12 +350,11 @@
        (when (> (length buf) 0)
          (setf (dialog-input-buffer dlg) (subseq buf 0 (1- (length buf))))))
      nil)
-    ;; Character input in input mode
+    ;; Character input
     ((and (dialog-input-mode dlg)
           (key-event-char key)
           (graphic-char-p (key-event-char key)))
      (setf (dialog-input-buffer dlg)
-           (concatenate 'string (dialog-input-buffer dlg)
-                        (string (key-event-char key))))
+           (concatenate 'string (dialog-input-buffer dlg) (string (key-event-char key))))
      nil)
     (t nil)))

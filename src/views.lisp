@@ -274,7 +274,7 @@
       (draw-dialog (active-dialog view) width height))))
 
 (defmethod handle-key ((view main-view) key)
-  ;; If dialog is active, handle dialog keys first
+  ;; If dialog is active, ALL keys go to dialog - nothing else processes them
   (when (active-dialog view)
     (let ((result (handle-dialog-key (active-dialog view) key)))
       (cond
@@ -301,9 +301,9 @@
               (refresh-data view))))
          (setf (active-dialog view) nil))
         ((eq result :cancel)
-         (setf (active-dialog view) nil)))
-      ;; Return nil to continue (dialog handled the key)
-      (return-from handle-key nil)))
+         (setf (active-dialog view) nil))))
+    ;; ALWAYS return here when dialog is active - never fall through to main key handling
+    (return-from handle-key nil))
   
   (let* ((focused-idx (view-focused-panel view))
          (panel (nth focused-idx (view-panels view))))
@@ -392,10 +392,7 @@
       ((and (key-event-char key) (char= (key-event-char key) #\c))
        (setf (active-dialog view)
              (make-dialog :title "Commit"
-                          :message "Enter commit message:"
-                          :input-label "Message"
-                          :input-mode t
-                          :buttons '("Commit" "Cancel")))
+                          :input-mode t))
        nil)
       ;; Push - 'P' (capital) opens push confirmation
       ((and (key-event-char key) (char= (key-event-char key) #\P))
