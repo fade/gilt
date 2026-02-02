@@ -6,30 +6,24 @@
 ;;; Key event class
 
 (defclass key-event ()
-  ((char :initarg :char :accessor key-char :initform nil
+  ((char :initarg :char :accessor key-event-char :initform nil
          :documentation "Character if printable key")
-   (code :initarg :code :accessor key-code :initform nil
+   (code :initarg :code :accessor key-event-code :initform nil
          :documentation "Keyword for special keys")
-   (ctrl-p :initarg :ctrl-p :accessor key-ctrl-p :initform nil
+   (ctrl-p :initarg :ctrl-p :accessor key-event-ctrl-p :initform nil
            :documentation "Control modifier pressed")
-   (alt-p :initarg :alt-p :accessor key-alt-p :initform nil
+   (alt-p :initarg :alt-p :accessor key-event-alt-p :initform nil
           :documentation "Alt modifier pressed"))
   (:documentation "Represents a keyboard input event"))
 
 (defmethod print-object ((key key-event) stream)
   (print-unreadable-object (key stream :type t)
     (format stream "~@[char=~S~]~@[ code=~S~]~@[ ctrl~]~@[ alt~]"
-            (key-char key) (key-code key)
-            (key-ctrl-p key) (key-alt-p key))))
+            (key-event-char key) (key-event-code key)
+            (key-event-ctrl-p key) (key-event-alt-p key))))
 
 (defun make-key-event (&key char code ctrl-p alt-p)
   (make-instance 'key-event :char char :code code :ctrl-p ctrl-p :alt-p alt-p))
-
-;; Aliases for compatibility
-(defun key-event-char (key) (key-char key))
-(defun key-event-code (key) (key-code key))
-(defun key-event-ctrl-p (key) (key-ctrl-p key))
-(defun key-event-alt-p (key) (key-alt-p key))
 
 ;;; Special key codes
 
@@ -125,6 +119,16 @@
        (leave-alternate-screen)
        (reset))))
 
+(defun setup-terminal ()
+  "Enter raw mode and prepare terminal for TUI"
+  (enable-raw-mode *terminal-mode*)
+  (cursor-hide))
+
+(defun restore-terminal ()
+  "Temporarily restore terminal to normal mode (for spawning external programs)"
+  (cursor-show)
+  (disable-raw-mode *terminal-mode*))
+
 ;;; Input reader class - reads from /dev/tty
 
 (defclass input-reader ()
@@ -218,6 +222,7 @@
       ((< byte 32)
        (cond
          ((= byte 13) (make-key-event :code +key-enter+))
+         ((= byte 10) (make-key-event :char #\Newline))  ; Line feed (from paste)
          ((= byte 9) (make-key-event :code +key-tab+))
          ((= byte 8) (make-key-event :code +key-backspace+))  ; Ctrl+H / backspace on some terminals
          (t (make-key-event :char (code-char (+ byte 96)) :ctrl-p t))))
@@ -240,3 +245,17 @@
   "Read a key event from terminal. Blocks until key pressed."
   (reader-open *input-reader*)
   (read-key-event *input-reader*))
+
+(defun read-key-with-timeout (timeout-ms)
+  "Try to read a key event with timeout. Returns key-event or nil if timeout."
+  (reader-open *input-reader*)
+  (let ((stream (reader-stream *input-reader*))
+        (start-time (get-internal-real-time))
+        (timeout-ticks (* timeout-ms (/ internal-time-units-per-second 1000))))
+    ;; Poll for input with timeout
+    (loop
+      (when (listen stream)
+        (return (read-key-event *input-reader*)))
+      (when (> (- (get-internal-real-time) start-time) timeout-ticks)
+        (return nil))
+      (sleep 0.01))))

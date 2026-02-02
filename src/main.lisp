@@ -3,10 +3,20 @@
 ;;; Main Application Loop
 ;;; LazyGit-style Git TUI
 
+;;; Version - follows Semantic Versioning (https://semver.org/)
+;;; MAJOR.MINOR.PATCH
+;;; - MAJOR: incompatible API changes
+;;; - MINOR: new functionality (backwards compatible)
+;;; - PATCH: bug fixes (backwards compatible)
+(defparameter *version* "0.1.0"
+  "Gilt version number")
+
 ;;; Application class - encapsulates all application state
 
 (defclass application ()
-  ((views :initarg :views :accessor app-views :initform (make-hash-table :test 'eq))
+  ((repo :initarg :repo :accessor app-repo :initform nil
+         :documentation "The git repository this application is managing")
+   (views :initarg :views :accessor app-views :initform (make-hash-table :test 'eq))
    (current-view :initarg :current-view :accessor app-current-view :initform nil)
    (width :initarg :width :accessor app-width :initform 80)
    (height :initarg :height :accessor app-height :initform 24)
@@ -34,9 +44,12 @@
   (:documentation "Run the main event loop"))
 
 (defmethod app-init ((app application))
-  (setf (gethash :status (app-views app)) (make-instance 'status-view))
-  (setf (gethash :log (app-views app)) (make-instance 'log-view))
-  (setf (gethash :branches (app-views app)) (make-instance 'branches-view))
+  ;; Initialize the git repository and set global for convenience functions
+  (setf (app-repo app) (gilt.git:ensure-repo))
+  ;; All views use main-view - the legacy subclasses were empty
+  (setf (gethash :status (app-views app)) (make-instance 'main-view))
+  (setf (gethash :log (app-views app)) (make-instance 'main-view))
+  (setf (gethash :branches (app-views app)) (make-instance 'main-view))
   (setf (app-current-view app) (gethash :status (app-views app)))
   (let ((size (terminal-size)))
     (when size
@@ -51,10 +64,12 @@
       (refresh-data view))))
 
 (defmethod app-render ((app application) &optional dialog-only)
+  (begin-sync-update)
   (unless dialog-only
     (clear-screen)
     (draw-header (app-width app)))
   (draw-view (app-current-view app) (app-width app) (1- (app-height app)))
+  (end-sync-update)
   (finish-output *terminal-io*))
 
 (defmethod app-handle-key ((app application) key)
@@ -72,19 +87,48 @@
   (setf (app-running-p app) t)
   (app-render app)
   (loop while (app-running-p app) do
-    (let* ((key (read-key)))
-      (multiple-value-bind (continue-p dialog-only)
-          (app-handle-key app key)
-        (unless continue-p
-          (setf (app-running-p app) nil)
-          (return))
-        ;; Check for terminal resize
-        (let ((new-size (terminal-size)))
-          (when new-size
-            (setf (app-width app) (first new-size)
-                  (app-height app) (second new-size))))
-        ;; Re-render - skip full redraw if dialog is handling input
-        (unless dialog-only
+    ;; Check if current view has an active runner - use timeout if so
+    (let* ((view (app-current-view app))
+           (has-runner (and view 
+                            (slot-boundp view 'gilt.views::active-runner)
+                            (slot-value view 'gilt.views::active-runner)))
+           (key (if has-runner
+                    (read-key-with-timeout 100)  ; 100ms timeout for polling
+                    (read-key))))
+      ;; If timeout (nil key) and runner active, just re-render to show updates
+      (when (or key (not has-runner))
+        (when key
+          (multiple-value-bind (continue-p dialog-only)
+              (app-handle-key app key)
+            (unless continue-p
+              (setf (app-running-p app) nil)
+              (return))
+            ;; Check for terminal resize
+            (let ((new-size (terminal-size)))
+              (when new-size
+                (setf (app-width app) (first new-size)
+                      (app-height app) (second new-size))))
+            ;; Re-render - skip full redraw if dialog is handling input
+            (unless dialog-only
+              (app-render app)))))
+      ;; If runner active and no key, still poll and render
+      ;; Re-check runner in case it was dismissed by key handler
+      (let ((current-runner (and view 
+                                  (slot-boundp view 'gilt.views::active-runner)
+                                  (slot-value view 'gilt.views::active-runner))))
+        (when (and current-runner (null key))
+          ;; Poll the runner for updates
+          (gilt.pty:runner-poll current-runner)
+          ;; Update main panel with output
+          (let ((output (gilt.pty:runner-get-output current-runner)))
+            (setf (gilt.ui:panel-items (gilt.views::main-panel view))
+                  (append output
+                          (if (gilt.pty:runner-finished-p current-runner)
+                              (list "" 
+                                    (format nil "--- Finished (exit code: ~D) ---" 
+                                            (gilt.pty:runner-exit-code current-runner))
+                                    "Press any key to continue...")
+                              (list "" (slot-value view 'gilt.views::runner-title))))))
           (app-render app))))))
 
 ;;; Global application instance

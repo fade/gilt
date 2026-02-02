@@ -139,6 +139,39 @@
                        :staged-p staged-p
                        :file (subseq line 3))))))
 
+(defun git-branch-tracking-info ()
+  "Get tracking info for current branch. Returns (values upstream ahead behind) or nil if no upstream."
+  (let ((lines (git-run-lines "status" "--porcelain=v2" "--branch")))
+    (let ((upstream nil)
+          (ahead 0)
+          (behind 0))
+      (dolist (line lines)
+        (cond
+          ((cl-ppcre:scan "^# branch\\.upstream " line)
+           (setf upstream (subseq line 18)))
+          ((cl-ppcre:scan "^# branch\\.ab " line)
+           (multiple-value-bind (match regs)
+               (cl-ppcre:scan-to-strings "\\+(\\d+) -(\\d+)" line)
+             (declare (ignore match))
+             (when regs
+               (setf ahead (parse-integer (aref regs 0)))
+               (setf behind (parse-integer (aref regs 1))))))))
+      (when upstream
+        (values upstream ahead behind)))))
+
+(defun git-repo-state ()
+  "Get current repository state (merge, rebase, etc). Returns keyword or nil."
+  (let ((git-dir (string-trim '(#\Newline #\Space)
+                              (git-run "rev-parse" "--git-dir"))))
+    (cond
+      ((probe-file (merge-pathnames "MERGE_HEAD" git-dir)) :merging)
+      ((probe-file (merge-pathnames "rebase-merge" git-dir)) :rebasing)
+      ((probe-file (merge-pathnames "rebase-apply" git-dir)) :rebasing)
+      ((probe-file (merge-pathnames "CHERRY_PICK_HEAD" git-dir)) :cherry-picking)
+      ((probe-file (merge-pathnames "REVERT_HEAD" git-dir)) :reverting)
+      ((probe-file (merge-pathnames "BISECT_LOG" git-dir)) :bisecting)
+      (t nil))))
+
 ;;; Diff
 
 (defun git-diff (&optional file)
@@ -235,11 +268,16 @@
   (make-instance 'log-entry :hash hash :short-hash short-hash
                             :author author :date date :message message))
 
-(defun git-log (&key (count 50))
-  "Get recent commits"
-  (let ((lines (git-run-lines "log" 
-                              (format nil "-~D" count)
-                              "--pretty=format:%H|%h|%an|%ar|%s")))
+(defun git-log (&key (count 50) branch)
+  "Get recent commits, optionally from a specific branch"
+  (let ((lines (if branch
+                   (git-run-lines "log" 
+                                  (format nil "-~D" count)
+                                  "--pretty=format:%H|%h|%an|%ar|%s"
+                                  branch)
+                   (git-run-lines "log" 
+                                  (format nil "-~D" count)
+                                  "--pretty=format:%H|%h|%an|%ar|%s"))))
     (loop for line in lines
           for parts = (cl-ppcre:split "\\|" line :limit 5)
           when (= (length parts) 5)
@@ -249,6 +287,172 @@
                      :author (third parts)
                      :date (fourth parts)
                      :message (fifth parts)))))
+
+(defun git-log-branch-only (branch &key (count 50))
+  "Get commits that are in BRANCH but not in current branch (for cherry-picking)"
+  (let* ((current (git-current-branch))
+         (lines (git-run-lines "log" 
+                               (format nil "-~D" count)
+                               "--pretty=format:%H|%h|%an|%ar|%s"
+                               (format nil "~A..~A" current branch))))
+    (loop for line in lines
+          for parts = (cl-ppcre:split "\\|" line :limit 5)
+          when (= (length parts) 5)
+            collect (make-log-entry
+                     :hash (first parts)
+                     :short-hash (second parts)
+                     :author (third parts)
+                     :date (fourth parts)
+                     :message (fifth parts)))))
+
+(defun git-log-search (query &key (count 100) author after before)
+  "Search commits by message, author, or date range.
+   QUERY: search term for commit message (can be nil)
+   AUTHOR: filter by author name
+   AFTER: commits after date (e.g. '2024-01-01')
+   BEFORE: commits before date"
+  (let ((args (list "log" (format nil "-~D" count) "--pretty=format:%H|%h|%an|%ar|%s")))
+    (when query
+      (setf args (append args (list "--regexp-ignore-case" (format nil "--grep=~A" query)))))
+    (when author
+      (setf args (append args (list (format nil "--author=~A" author)))))
+    (when after
+      (setf args (append args (list (format nil "--after=~A" after)))))
+    (when before
+      (setf args (append args (list (format nil "--before=~A" before)))))
+    (let ((lines (apply #'git-run-lines args)))
+      (loop for line in lines
+            for parts = (cl-ppcre:split "\\|" line :limit 5)
+            when (= (length parts) 5)
+              collect (make-log-entry
+                       :hash (first parts)
+                       :short-hash (second parts)
+                       :author (third parts)
+                       :date (fourth parts)
+                       :message (fifth parts))))))
+
+(defun git-commit-message (hash)
+  "Get the full commit message for a given commit hash"
+  (git-run "log" "-1" "--format=%B" hash))
+
+;;; Blame
+
+(defclass blame-line ()
+  ((hash :initarg :hash :accessor blame-line-hash)
+   (short-hash :initarg :short-hash :accessor blame-line-short-hash)
+   (author :initarg :author :accessor blame-line-author)
+   (date :initarg :date :accessor blame-line-date)
+   (line-num :initarg :line-num :accessor blame-line-num)
+   (content :initarg :content :accessor blame-line-content))
+  (:documentation "A single line from git blame output"))
+
+(defun make-blame-line (&key hash short-hash author date line-num content)
+  (make-instance 'blame-line
+                 :hash hash
+                 :short-hash short-hash
+                 :author author
+                 :date date
+                 :line-num line-num
+                 :content content))
+
+(defun git-blame (file)
+  "Get blame information for a file. Returns list of blame-line objects."
+  (let ((lines (git-run-lines "blame" "--porcelain" file)))
+    (when lines
+      (let ((result nil)
+            (current-hash nil)
+            (current-author nil)
+            (current-date nil)
+            (line-num 0))
+        ;; Parse porcelain format
+        (dolist (line lines)
+          (cond
+            ;; Hash line (40 char hash followed by line numbers)
+            ((and (>= (length line) 40)
+                  (every (lambda (c) (or (digit-char-p c 16))) (subseq line 0 40)))
+             (setf current-hash (subseq line 0 40))
+             (incf line-num))
+            ;; Author line
+            ((and (> (length line) 7)
+                  (string= (subseq line 0 7) "author "))
+             (setf current-author (subseq line 7)))
+            ;; Author time (Unix timestamp)
+            ((and (> (length line) 12)
+                  (string= (subseq line 0 12) "author-time "))
+             (let ((timestamp (parse-integer (subseq line 12) :junk-allowed t)))
+               (when timestamp
+                 (setf current-date (format-relative-time timestamp)))))
+            ;; Content line (starts with tab)
+            ((and (> (length line) 0)
+                  (char= (char line 0) #\Tab))
+             (push (make-blame-line
+                    :hash current-hash
+                    :short-hash (if current-hash (subseq current-hash 0 (min 7 (length current-hash))) "")
+                    :author (or current-author "")
+                    :date (or current-date "")
+                    :line-num line-num
+                    :content (subseq line 1))
+                   result))))
+        (nreverse result)))))
+
+(defun format-relative-time (unix-timestamp)
+  "Format a Unix timestamp as relative time (e.g., '2 days ago')"
+  (let* ((now (get-universal-time))
+         ;; Unix epoch is 1970, CL universal time epoch is 1900
+         (unix-epoch-offset 2208988800)
+         (then (+ unix-timestamp unix-epoch-offset))
+         (diff (- now then)))
+    (cond
+      ((< diff 60) "just now")
+      ((< diff 3600) (format nil "~D mins ago" (floor diff 60)))
+      ((< diff 86400) (format nil "~D hours ago" (floor diff 3600)))
+      ((< diff 604800) (format nil "~D days ago" (floor diff 86400)))
+      ((< diff 2592000) (format nil "~D weeks ago" (floor diff 604800)))
+      ((< diff 31536000) (format nil "~D months ago" (floor diff 2592000)))
+      (t (format nil "~D years ago" (floor diff 31536000))))))
+
+;;; Tags
+
+(defclass tag-entry ()
+  ((name :initarg :name :accessor tag-name :initform nil)
+   (type :initarg :type :accessor tag-type :initform :lightweight)  ; :lightweight or :annotated
+   (date :initarg :date :accessor tag-date :initform nil)
+   (message :initarg :message :accessor tag-message :initform nil))
+  (:documentation "Represents a git tag"))
+
+(defun make-tag-entry (&key name type date message)
+  (make-instance 'tag-entry :name name :type type :date date :message message))
+
+(defun git-tags ()
+  "Get list of tag-entry objects, sorted by date (newest first)"
+  (let ((lines (git-run-lines "tag" "-l" "--sort=-creatordate" 
+                              "--format=%(refname:short)|%(objecttype)|%(creatordate:relative)|%(subject)")))
+    (loop for line in lines
+          when (> (length line) 0)
+          collect (let ((parts (cl-ppcre:split "\\|" line :limit 4)))
+                    (make-tag-entry
+                     :name (first parts)
+                     :type (if (string= (second parts) "tag") :annotated :lightweight)
+                     :date (third parts)
+                     :message (fourth parts))))))
+
+(defun git-create-tag (name &optional message)
+  "Create a tag. If MESSAGE is provided, create annotated tag."
+  (if message
+      (git-run "tag" "-a" name "-m" message)
+      (git-run "tag" name)))
+
+(defun git-delete-tag (name)
+  "Delete a local tag"
+  (git-run "tag" "-d" name))
+
+(defun git-push-tag (name)
+  "Push a tag to origin"
+  (git-run "push" "origin" name))
+
+(defun git-push-all-tags ()
+  "Push all tags to origin"
+  (git-run "push" "origin" "--tags"))
 
 ;;; Branches
 
@@ -261,6 +465,12 @@
   "Get current branch name"
   (string-trim '(#\Newline #\Space) 
                (git-run "rev-parse" "--abbrev-ref" "HEAD")))
+
+(defun git-branch-has-upstream-p ()
+  "Check if current branch has an upstream tracking branch"
+  (let ((result (ignore-errors 
+                  (git-run "rev-parse" "--abbrev-ref" "--symbolic-full-name" "@{u}"))))
+    (and result (> (length (string-trim '(#\Newline #\Space) result)) 0))))
 
 ;;; Staging
 
@@ -439,6 +649,86 @@
   (string-trim '(#\Newline #\Space)
                (git-run "remote" "get-url" remote)))
 
+(defun git-remote-add (name url)
+  "Add a new remote"
+  (git-run "remote" "add" name url))
+
+(defun git-remote-remove (name)
+  "Remove a remote"
+  (git-run "remote" "remove" name))
+
+(defun git-remote-rename (old-name new-name)
+  "Rename a remote"
+  (git-run "remote" "rename" old-name new-name))
+
+(defun git-remote-set-url (name url)
+  "Set URL for a remote"
+  (git-run "remote" "set-url" name url))
+
+(defun git-remotes-with-urls ()
+  "Get list of (name . url) pairs for all remotes"
+  (let ((remotes (git-remotes)))
+    (loop for remote in remotes
+          collect (cons remote (git-remote-url remote)))))
+
+;;; Submodules
+
+(defclass submodule-entry ()
+  ((name :initarg :name :accessor submodule-name :initform nil)
+   (path :initarg :path :accessor submodule-path :initform nil)
+   (url :initarg :url :accessor submodule-url :initform nil)
+   (status :initarg :status :accessor submodule-status :initform :clean)  ; :clean, :modified, :uninitialized
+   (commit :initarg :commit :accessor submodule-commit :initform nil))
+  (:documentation "Represents a git submodule"))
+
+(defun make-submodule-entry (&key name path url status commit)
+  (make-instance 'submodule-entry :name name :path path :url url :status status :commit commit))
+
+(defun git-submodules ()
+  "Get list of submodule-entry objects with status"
+  (let ((lines (git-run-lines "submodule" "status")))
+    (loop for line in lines
+          when (> (length line) 0)
+          collect (let* ((status-char (char line 0))
+                         (status (case status-char
+                                   (#\- :uninitialized)
+                                   (#\+ :modified)
+                                   (#\U :merge-conflict)
+                                   (t :clean)))
+                         (rest (string-trim " " (subseq line 1)))
+                         (parts (cl-ppcre:split "\\s+" rest :limit 2))
+                         (commit (first parts))
+                         (path (second parts)))
+                    (make-submodule-entry
+                     :name (car (last (cl-ppcre:split "/" path)))
+                     :path path
+                     :status status
+                     :commit (subseq commit 0 (min 7 (length commit))))))))
+
+(defun git-submodule-init ()
+  "Initialize submodules"
+  (git-run "submodule" "init"))
+
+(defun git-submodule-update (&optional path)
+  "Update submodules (optionally just one by path)"
+  (if path
+      (git-run "submodule" "update" "--init" path)
+      (git-run "submodule" "update" "--init" "--recursive")))
+
+(defun git-submodule-sync ()
+  "Sync submodule URLs from .gitmodules"
+  (git-run "submodule" "sync"))
+
+(defun git-submodule-add (url &optional path)
+  "Add a new submodule"
+  (if path
+      (git-run "submodule" "add" url path)
+      (git-run "submodule" "add" url)))
+
+(defun git-submodule-deinit (path)
+  "Deinitialize a submodule"
+  (git-run "submodule" "deinit" "-f" path))
+
 ;;; Repo info
 
 (defun git-repo-root ()
@@ -462,3 +752,158 @@
         (when (= (length parts) 2)
           (cons (parse-integer (second parts) :junk-allowed t)
                 (parse-integer (first parts) :junk-allowed t)))))))
+
+;;; Git Config
+
+(defclass config-entry ()
+  ((key :initarg :key :accessor config-key :initform nil)
+   (value :initarg :value :accessor config-value :initform nil)
+   (scope :initarg :scope :accessor config-scope :initform :local))  ; :local, :global, :system
+  (:documentation "Represents a git config entry"))
+
+(defun make-config-entry (&key key value scope)
+  (make-instance 'config-entry :key key :value value :scope scope))
+
+(defun git-config-list (&optional scope)
+  "Get list of config-entry objects. SCOPE can be :local, :global, :system, or nil for all."
+  (let* ((args (case scope
+                 (:local '("config" "--local" "--list"))
+                 (:global '("config" "--global" "--list"))
+                 (:system '("config" "--system" "--list"))
+                 (t '("config" "--list" "--show-scope"))))
+         (lines (apply #'git-run-lines args)))
+    (loop for line in lines
+          when (> (length line) 0)
+          collect (if scope
+                      ;; Simple key=value format
+                      (let ((pos (position #\= line)))
+                        (when pos
+                          (make-config-entry
+                           :key (subseq line 0 pos)
+                           :value (subseq line (1+ pos))
+                           :scope scope)))
+                      ;; scope<tab>key=value format
+                      (let* ((tab-pos (position #\Tab line))
+                             (scope-str (when tab-pos (subseq line 0 tab-pos)))
+                             (rest (when tab-pos (subseq line (1+ tab-pos))))
+                             (eq-pos (when rest (position #\= rest))))
+                        (when (and scope-str rest eq-pos)
+                          (make-config-entry
+                           :key (subseq rest 0 eq-pos)
+                           :value (subseq rest (1+ eq-pos))
+                           :scope (cond
+                                    ((string= scope-str "local") :local)
+                                    ((string= scope-str "global") :global)
+                                    ((string= scope-str "system") :system)
+                                    (t :unknown)))))))))
+
+(defun git-config-get (key &optional scope)
+  "Get a config value by key. Returns string or nil."
+  (let ((args (case scope
+                (:local (list "config" "--local" "--get" key))
+                (:global (list "config" "--global" "--get" key))
+                (:system (list "config" "--system" "--get" key))
+                (t (list "config" "--get" key)))))
+    (let ((output (apply #'git-run args)))
+      (when (and output (> (length output) 0))
+        (string-trim '(#\Newline #\Space) output)))))
+
+(defun git-config-set (key value &optional scope)
+  "Set a config value. SCOPE defaults to local."
+  (let ((args (case scope
+                (:global (list "config" "--global" key value))
+                (:system (list "config" "--system" key value))
+                (t (list "config" "--local" key value)))))
+    (apply #'git-run args)))
+
+(defun git-config-unset (key &optional scope)
+  "Unset a config value."
+  (let ((args (case scope
+                (:local (list "config" "--local" "--unset" key))
+                (:global (list "config" "--global" "--unset" key))
+                (:system (list "config" "--system" "--unset" key))
+                (t (list "config" "--unset" key)))))
+    (apply #'git-run args)))
+
+;;; Git Worktrees
+
+(defclass worktree-entry ()
+  ((path :initarg :path :accessor worktree-path :initform nil)
+   (head :initarg :head :accessor worktree-head :initform nil)
+   (branch :initarg :branch :accessor worktree-branch :initform nil)
+   (bare :initarg :bare :accessor worktree-bare :initform nil)
+   (detached :initarg :detached :accessor worktree-detached :initform nil)
+   (locked :initarg :locked :accessor worktree-locked :initform nil)
+   (prunable :initarg :prunable :accessor worktree-prunable :initform nil))
+  (:documentation "Represents a git worktree"))
+
+(defun make-worktree-entry (&key path head branch bare detached locked prunable)
+  (make-instance 'worktree-entry :path path :head head :branch branch
+                 :bare bare :detached detached :locked locked :prunable prunable))
+
+(defun git-worktree-list ()
+  "Get list of worktree-entry objects."
+  (let ((lines (git-run-lines "worktree" "list" "--porcelain")))
+    (let ((worktrees nil)
+          (current nil))
+      (dolist (line lines)
+        (cond
+          ((string= line "")
+           (when current
+             (push current worktrees)
+             (setf current nil)))
+          ((cl-ppcre:scan "^worktree " line)
+           (setf current (make-worktree-entry :path (subseq line 9))))
+          ((cl-ppcre:scan "^HEAD " line)
+           (when current
+             (setf (worktree-head current) (subseq line 5))))
+          ((cl-ppcre:scan "^branch " line)
+           (when current
+             (let ((branch (subseq line 7)))
+               (setf (worktree-branch current)
+                     (if (cl-ppcre:scan "^refs/heads/" branch)
+                         (subseq branch 11)
+                         branch)))))
+          ((string= line "bare")
+           (when current (setf (worktree-bare current) t)))
+          ((string= line "detached")
+           (when current (setf (worktree-detached current) t)))
+          ((cl-ppcre:scan "^locked" line)
+           (when current (setf (worktree-locked current) t)))
+          ((cl-ppcre:scan "^prunable" line)
+           (when current (setf (worktree-prunable current) t)))))
+      (when current
+        (push current worktrees))
+      (nreverse worktrees))))
+
+(defun git-worktree-add (path &optional branch)
+  "Add a new worktree at PATH for BRANCH. If BRANCH is nil, creates detached HEAD."
+  (if branch
+      (git-run "worktree" "add" path branch)
+      (git-run "worktree" "add" "--detach" path)))
+
+(defun git-worktree-add-new-branch (path new-branch &optional start-point)
+  "Add a new worktree at PATH with a new branch NEW-BRANCH."
+  (if start-point
+      (git-run "worktree" "add" "-b" new-branch path start-point)
+      (git-run "worktree" "add" "-b" new-branch path)))
+
+(defun git-worktree-remove (path &optional force)
+  "Remove a worktree at PATH."
+  (if force
+      (git-run "worktree" "remove" "--force" path)
+      (git-run "worktree" "remove" path)))
+
+(defun git-worktree-lock (path &optional reason)
+  "Lock a worktree to prevent pruning."
+  (if reason
+      (git-run "worktree" "lock" "--reason" reason path)
+      (git-run "worktree" "lock" path)))
+
+(defun git-worktree-unlock (path)
+  "Unlock a worktree."
+  (git-run "worktree" "unlock" path))
+
+(defun git-worktree-prune ()
+  "Prune stale worktree information."
+  (git-run "worktree" "prune"))

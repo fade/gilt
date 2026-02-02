@@ -219,6 +219,14 @@
 (defun clear-screen ()
   (format *terminal-io* "~C[2J" *escape*))
 
+(defun begin-sync-update ()
+  "Begin synchronized update mode - terminal buffers output until end-sync-update"
+  (format *terminal-io* "~C[?2026h" *escape*))
+
+(defun end-sync-update ()
+  "End synchronized update mode - terminal displays buffered content"
+  (format *terminal-io* "~C[?2026l" *escape*))
+
 (defun clear-line ()
   (format *terminal-io* "~C[2K" *escape*))
 

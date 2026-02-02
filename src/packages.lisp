@@ -56,6 +56,8 @@
            #:clear-screen
            #:clear-line
            #:clear-to-end
+           #:begin-sync-update
+           #:end-sync-update
            #:fg
            #:bg
            #:fg-rgb
@@ -71,13 +73,9 @@
 
 (defpackage #:gilt.terminal
   (:use #:cl #:gilt.ansi)
-  (:export ;; Key event class
+  (:export ;; Key event class and accessors
            #:key-event
            #:make-key-event
-           #:key-char
-           #:key-code
-           #:key-ctrl-p
-           #:key-alt-p
            #:key-event-char
            #:key-event-code
            #:key-event-ctrl-p
@@ -99,6 +97,9 @@
            #:with-raw-terminal
            #:terminal-size
            #:read-key
+           #:read-key-with-timeout
+           #:setup-terminal
+           #:restore-terminal
            ;; Key constants
            #:+key-up+
            #:+key-down+
@@ -183,11 +184,27 @@
            #:git-run
            #:git-run-lines
            #:git-status
+           #:git-branch-tracking-info
+           #:git-repo-state
            #:git-diff
            #:git-diff-staged
            #:git-log
+           #:git-log-search
+           #:git-log-branch-only
            #:git-branches
+           #:git-tags
+           #:tag-entry
+           #:tag-name
+           #:tag-type
+           #:tag-date
+           #:tag-message
+           #:make-tag-entry
+           #:git-create-tag
+           #:git-delete-tag
+           #:git-push-tag
+           #:git-push-all-tags
            #:git-current-branch
+           #:git-branch-has-upstream-p
            #:git-stage-file
            #:git-unstage-file
            #:git-commit
@@ -231,17 +248,86 @@
            #:git-fetch
            #:git-remotes
            #:git-remote-url
+           #:git-remote-add
+           #:git-remote-remove
+           #:git-remote-rename
+           #:git-remote-set-url
+           #:git-remotes-with-urls
+           #:git-submodules
+           #:submodule-entry
+           #:submodule-name
+           #:submodule-path
+           #:submodule-url
+           #:submodule-status
+           #:submodule-commit
+           #:make-submodule-entry
+           #:git-submodule-init
+           #:git-submodule-update
+           #:git-submodule-sync
+           #:git-submodule-add
+           #:git-submodule-deinit
            #:git-ahead-behind
+           #:git-config-list
+           #:git-config-get
+           #:git-config-set
+           #:git-config-unset
+           #:config-entry
+           #:config-key
+           #:config-value
+           #:config-scope
+           #:make-config-entry
+           #:git-worktree-list
+           #:git-worktree-add
+           #:git-worktree-add-new-branch
+           #:git-worktree-remove
+           #:git-worktree-lock
+           #:git-worktree-unlock
+           #:git-worktree-prune
+           #:worktree-entry
+           #:worktree-path
+           #:worktree-head
+           #:worktree-branch
+           #:worktree-bare
+           #:worktree-detached
+           #:worktree-locked
+           #:worktree-prunable
+           #:make-worktree-entry
            #:git-repo-root
-           #:git-repo-name))
+           #:git-repo-name
+           #:git-commit-message
+           #:git-blame
+           #:blame-line
+           #:blame-line-hash
+           #:blame-line-short-hash
+           #:blame-line-author
+           #:blame-line-date
+           #:blame-line-num
+           #:blame-line-content
+           #:ensure-repo
+           #:*current-repo*))
+
+(defpackage #:gilt.pty
+  (:use #:cl)
+  (:export ;; Process runner class
+           #:process-runner
+           #:make-process-runner
+           #:runner-master-fd
+           #:runner-process
+           #:runner-output-lines
+           #:runner-current-line
+           #:runner-finished-p
+           #:runner-exit-code
+           ;; Generic functions
+           #:runner-start
+           #:runner-poll
+           #:runner-send
+           #:runner-stop
+           #:runner-get-output))
 
 (defpackage #:gilt.views
-  (:use #:cl #:gilt.ansi #:gilt.terminal #:gilt.ui #:gilt.git)
+  (:use #:cl #:gilt.ansi #:gilt.terminal #:gilt.ui #:gilt.git #:gilt.pty)
   (:export #:view
            #:main-view
-           #:status-view
-           #:log-view
-           #:branches-view
            #:draw-view
            #:handle-key
            #:refresh-data
@@ -251,4 +337,5 @@
 (defpackage #:gilt
   (:use #:cl #:gilt.ansi #:gilt.terminal #:gilt.ui #:gilt.git #:gilt.views)
   (:export #:main
-           #:run))
+           #:run
+           #:*version*))

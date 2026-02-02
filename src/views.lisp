@@ -76,7 +76,37 @@
    (spinner-active :accessor spinner-active :initform nil)
    ;; Remote branches
    (remote-branch-list :accessor remote-branch-list :initform nil)
-   (show-remote-branches :accessor show-remote-branches :initform nil)))
+   (show-remote-branches :accessor show-remote-branches :initform nil)
+   ;; Tags
+   (tag-list :accessor tag-list :initform nil)
+   (show-tags :accessor show-tags :initform nil)
+   ;; Submodules
+   (submodule-list :accessor submodule-list :initform nil)
+   (show-submodules :accessor show-submodules :initform nil)
+   ;; Async process runner for push/pull
+   (active-runner :accessor active-runner :initform nil)
+   (runner-title :accessor runner-title :initform nil)
+   ;; Help overlay
+   (help-visible :accessor help-visible :initform nil)
+   ;; Blame mode
+   (blame-mode :accessor blame-mode :initform nil)
+   (blame-data :accessor blame-data :initform nil)
+   (blame-file :accessor blame-file :initform nil)
+   ;; Cherry-pick mode (from other branches)
+   (cherry-pick-mode :accessor cherry-pick-mode :initform nil)
+   (cherry-pick-branch :accessor cherry-pick-branch :initform nil)
+   (cherry-pick-commits :accessor cherry-pick-commits :initform nil)
+   ;; Search commits mode
+   (search-mode :accessor search-mode :initform nil)
+   (search-query :accessor search-query :initform nil)
+   (search-results :accessor search-results :initform nil)
+   ;; Config viewer mode
+   (config-mode :accessor config-mode :initform nil)
+   (config-list :accessor config-list :initform nil)
+   (config-scope-filter :accessor config-scope-filter :initform nil)  ; nil=all, :local, :global, :system
+   ;; Worktree list
+   (worktree-list :accessor worktree-list :initform nil)
+   (show-worktrees :accessor show-worktrees :initform nil)))
 
 (defmethod initialize-instance :after ((view main-view) &key)
   ;; Create all panels
@@ -116,39 +146,145 @@
     (setf (panel-items (cmdlog-panel view)) (command-log view))))
 
 (defmethod refresh-data ((view main-view))
-  ;; Status panel - repo info
+  ;; Status panel - repo info with tracking and state
   (let ((branch (git-current-branch))
-        (repo (git-repo-name)))
+        (repo (git-repo-name))
+        (state (git-repo-state)))
     (setf (current-branch view) branch)
-    (setf (panel-items (status-panel view))
-          (list (format nil "~A → ~A" repo branch))))
-  ;; Files panel - git status
-  (let ((entries (git-status)))
+    ;; Build status items
+    (multiple-value-bind (upstream ahead behind)
+        (git-branch-tracking-info)
+      (let ((items (list (format nil "~A → ~A" repo branch))))
+        ;; Add tracking info if available
+        (when upstream
+          (let ((tracking-str
+                  (cond
+                    ((and (> ahead 0) (> behind 0))
+                     (format nil "  ↑~D ↓~D ~A" ahead behind upstream))
+                    ((> ahead 0)
+                     (format nil "  ↑~D ~A" ahead upstream))
+                    ((> behind 0)
+                     (format nil "  ↓~D ~A" behind upstream))
+                    (t
+                     (format nil "  ≡ ~A" upstream)))))
+            (push (list :colored :cyan tracking-str) (cdr (last items)))))
+        ;; Add state indicator if in special state
+        (when state
+          (push (list :colored :bright-red
+                      (format nil "  ~A"
+                              (case state
+                                (:merging "MERGING")
+                                (:rebasing "REBASING")
+                                (:cherry-picking "CHERRY-PICKING")
+                                (:reverting "REVERTING")
+                                (:bisecting "BISECTING")
+                                (t "OPERATION IN PROGRESS"))))
+                (cdr (last items))))
+        (setf (panel-items (status-panel view)) items))))
+  ;; Files panel - git status or worktrees based on toggle
+  (let ((entries (git-status))
+        (worktrees (git-worktree-list)))
     (setf (status-entries view) entries)
-    (setf (panel-items (files-panel view))
-          (loop for e in entries
-                collect (format-status-entry e))))
-  ;; Branches panel - local or remote based on toggle
+    (setf (worktree-list view) worktrees)
+    (if (show-worktrees view)
+        (progn
+          (setf (panel-title (files-panel view))
+                (numbered-title 2 "Worktrees" '("Files")))
+          (setf (panel-items (files-panel view))
+                (if worktrees
+                    (loop for wt in worktrees
+                          collect (let ((path (worktree-path wt))
+                                        (branch (worktree-branch wt))
+                                        (bare (worktree-bare wt))
+                                        (detached (worktree-detached wt))
+                                        (locked (worktree-locked wt)))
+                                    (cond
+                                      (bare
+                                       `(:multi-colored
+                                         (:bright-black ,(format nil "  ~A" path))
+                                         (:bright-black " (bare)")))
+                                      (detached
+                                       `(:multi-colored
+                                         (:yellow ,(format nil "  ~A" path))
+                                         (:bright-black " (detached)")))
+                                      (locked
+                                       `(:multi-colored
+                                         (:red ,(format nil "  ~A" path))
+                                         (:bright-black ,(format nil " [~A] (locked)" branch))))
+                                      (t
+                                       `(:multi-colored
+                                         (:green ,(format nil "  ~A" path))
+                                         (:bright-black ,(format nil " [~A]" branch)))))))
+                    (list (list :colored :bright-black "  No worktrees")))))
+        (progn
+          (setf (panel-title (files-panel view))
+                (numbered-title 2 "Files" '("Worktrees")))
+          (setf (panel-items (files-panel view))
+                (loop for e in entries
+                      collect (format-status-entry e))))))
+  ;; Branches panel - local, remote, tags, or submodules based on toggle
   (let ((branches (git-branches))
-        (remote-branches (git-remote-branches)))
+        (remote-branches (git-remote-branches))
+        (tags (git-tags))
+        (submodules (git-submodules)))
     (setf (branch-list view) branches)
     (setf (remote-branch-list view) remote-branches)
+    (setf (tag-list view) tags)
+    (setf (submodule-list view) submodules)
     ;; Update panel title and items based on mode
-    (if (show-remote-branches view)
-        (progn
-          (setf (panel-title (branches-panel view))
-                (numbered-title 3 "Remotes" '("Local" "Tags")))
-          (setf (panel-items (branches-panel view))
-                (loop for b in remote-branches
-                      collect (list :colored :bright-cyan (format nil "  ~A" b)))))
-        (progn
-          (setf (panel-title (branches-panel view))
-                (numbered-title 3 "Local branches" '("Remotes" "Tags")))
-          (setf (panel-items (branches-panel view))
-                (loop for b in branches
-                      collect (if (string= b (current-branch view))
-                                  (list :colored :bright-green (format nil "* ~A" b))
-                                  (format nil "  ~A" b)))))))
+    (cond
+      ((show-submodules view)
+       (setf (panel-title (branches-panel view))
+             (numbered-title 3 "Submodules" '("Local" "Remotes")))
+       (setf (panel-items (branches-panel view))
+             (if submodules
+                 (loop for sm in submodules
+                       collect (let ((name (submodule-name sm))
+                                     (status (submodule-status sm))
+                                     (commit (submodule-commit sm)))
+                                 (case status
+                                   (:uninitialized
+                                    `(:multi-colored
+                                      (:red ,(format nil "- ~A" name))
+                                      (:bright-black " (not initialized)")))
+                                   (:modified
+                                    `(:multi-colored
+                                      (:yellow ,(format nil "+ ~A" name))
+                                      (:bright-black ,(format nil " ~A (modified)" commit))))
+                                   (t
+                                    `(:multi-colored
+                                      (:green ,(format nil "  ~A" name))
+                                      (:bright-black ,(format nil " ~A" commit)))))))
+                 (list (list :colored :bright-black "  No submodules")))))
+      ((show-tags view)
+       (setf (panel-title (branches-panel view))
+             (numbered-title 3 "Tags" '("Submodules" "Local")))
+       (setf (panel-items (branches-panel view))
+             (loop for tag in tags
+                   collect (let ((name (tag-name tag))
+                                 (date (or (tag-date tag) ""))
+                                 (annotated (eq (tag-type tag) :annotated)))
+                             (if annotated
+                                 `(:multi-colored
+                                   (:bright-yellow ,(format nil "  ~A" name))
+                                   (:bright-black ,(format nil " ~A" date)))
+                                 `(:multi-colored
+                                   (:yellow ,(format nil "  ~A" name))
+                                   (:bright-black ,(format nil " ~A" date))))))))
+      ((show-remote-branches view)
+       (setf (panel-title (branches-panel view))
+             (numbered-title 3 "Remotes" '("Tags" "Submodules")))
+       (setf (panel-items (branches-panel view))
+             (loop for b in remote-branches
+                   collect (list :colored :bright-cyan (format nil "  ~A" b)))))
+      (t
+       (setf (panel-title (branches-panel view))
+             (numbered-title 3 "Local" '("Remotes" "Tags" "Submodules")))
+       (setf (panel-items (branches-panel view))
+             (loop for b in branches
+                   collect (if (string= b (current-branch view))
+                               (list :colored :bright-green (format nil "* ~A" b))
+                               (format nil "  ~A" b)))))))
   ;; Commits panel - show hash (yellow), author initials, circle, and message
   (let ((commits (git-log :count 50)))
     (setf (commit-list view) commits)
@@ -234,18 +370,20 @@
              (setf (panel-title (main-panel view)) "[0] Diff")
              (setf (panel-items (main-panel view))
                    (cl-ppcre:split "\\n" diff))))))
-      ;; Commits panel focused - show commit details
+      ;; Commits panel focused - show commit details with full message
       ((= focused-idx 3)
        (let ((commits (commit-list view)))
          (when (and commits (< selected (length commits)))
-           (let ((commit (nth selected commits)))
+           (let* ((commit (nth selected commits))
+                  (full-message (git-commit-message (log-entry-hash commit)))
+                  (message-lines (cl-ppcre:split "\\n" (string-trim '(#\Newline #\Space) full-message))))
              (setf (panel-title (main-panel view)) "[0] Commit")
              (setf (panel-items (main-panel view))
-                   (list (format nil "Hash: ~A" (log-entry-hash commit))
-                         (format nil "Author: ~A" (log-entry-author commit))
-                         (format nil "Date: ~A" (log-entry-date commit))
-                         ""
-                         (log-entry-message commit)))))))
+                   (append (list (format nil "Hash: ~A" (log-entry-hash commit))
+                                 (format nil "Author: ~A" (log-entry-author commit))
+                                 (format nil "Date: ~A" (log-entry-date commit))
+                                 "")
+                           message-lines))))))
       ;; Branches panel focused
       ((= focused-idx 2)
        (setf (panel-title (main-panel view)) "[0] Branch Info")
@@ -259,19 +397,19 @@
   "Return context-specific help bindings based on focused panel"
   (case focused-idx
     (0 ; Status panel
-     '(("j/k" . "navigate") ("Tab" . "panels") ("q" . "quit")))
+     '(("j/k" . "navigate") ("Tab" . "panels") ("r" . "refresh") ("q" . "quit")))
     (1 ; Files panel
      '(("j/k" . "navigate") ("Space" . "stage/unstage") ("e" . "edit/hunks") ("d" . "discard")
-       ("o" . "use ours") ("t" . "use theirs") ("X" . "abort merge") ("c" . "commit") ("q" . "quit")))
+       ("c" . "commit") ("r" . "refresh") ("q" . "quit")))
     (2 ; Branches panel
      '(("j/k" . "navigate") ("Enter" . "checkout/track") ("n" . "new") ("f" . "fetch")
-       ("w" . "local/remote") ("M" . "merge") ("D" . "delete") ("q" . "quit")))
+       ("w" . "local/remote") ("M" . "merge") ("D" . "delete") ("r" . "refresh") ("q" . "quit")))
     (3 ; Commits panel
-     '(("j/k" . "navigate") ("S" . "squash") ("C" . "cherry-pick") ("R" . "revert") ("q" . "quit")))
+     '(("j/k" . "navigate") ("S" . "squash") ("C" . "cherry-pick") ("R" . "revert") ("r" . "refresh") ("q" . "quit")))
     (4 ; Stash panel
-     '(("j/k" . "navigate") ("s" . "stash") ("g" . "pop") ("Tab" . "panels") ("q" . "quit")))
+     '(("j/k" . "navigate") ("s" . "stash") ("g" . "pop") ("r" . "refresh") ("q" . "quit")))
     (t ; Default
-     '(("j/k" . "navigate") ("Tab" . "panels") ("q" . "quit")))))
+     '(("j/k" . "navigate") ("Tab" . "panels") ("r" . "refresh") ("q" . "quit")))))
 
 (defmethod draw-view ((view main-view) width height)
   ;; LazyGit layout:
@@ -342,13 +480,18 @@
     (loop for panel in (view-panels view)
           for i from 0
           do (setf (panel-focused panel) (= i focused-idx)))
+    ;; Main panel gets focus in blame mode or cherry-pick mode
+    (setf (panel-focused (main-panel view))
+          (or (blame-mode view) (cherry-pick-mode view)))
     ;; Draw all panels
     (dolist (panel (view-panels view))
       (draw-panel panel))
     ;; Draw command log panel (not in focus cycle)
     (draw-panel (cmdlog-panel view))
-    ;; Draw context-specific help bar at bottom
-    (draw-help-bar height width (get-panel-help focused-idx))
+    ;; Draw context-specific help bar at bottom (with version from gilt package)
+    (draw-help-bar height width (get-panel-help focused-idx) 
+                   (when (find-package :gilt) 
+                     (symbol-value (find-symbol "*VERSION*" :gilt))))
     ;; Draw spinner in bottom left if active
     (when (spinner-active view)
       (draw-spinner view height))
@@ -357,10 +500,209 @@
           (screen-height view) height)
     ;; Draw active dialog on top if present
     (when (active-dialog view)
-      (draw-dialog (active-dialog view) width height))))
+      (draw-dialog (active-dialog view) width height))
+    ;; Draw help overlay on top of everything
+    (when (help-visible view)
+      (draw-help-overlay width height))))
+
+(defun draw-help-overlay (width height)
+  "Draw the help overlay showing all keybindings"
+  (let* ((content-width 52)  ; Fixed content width
+         (box-width (+ content-width 4))  ; Add space for borders and padding
+         (help-lines '("        GILT - Git Interface for Lisp Terminal"
+                       ""
+                       " NAVIGATION"
+                       "   1-5        Switch to panel by number"
+                       "   Tab/l      Next panel    h  Previous panel"
+                       "   j/Down     Move down     k/Up  Move up"
+                       "   Enter      Select/expand item"
+                       ""
+                       " FILES (panel 2)"
+                       "   Space      Stage/unstage file"
+                       "   a          Stage all files"
+                       "   d          Discard changes (unstaged)"
+                       "   e          Edit file / enter hunk mode"
+                       "   b          Blame view (Enter for commit info)"
+                       "   o          Resolve conflict: keep ours"
+                       "   t          Resolve conflict: keep theirs"
+                       "   X          Abort merge"
+                       "   w          Toggle: Files/Worktrees"
+                       ""
+                       " COMMITS (panel 4)"
+                       "   /          Search commits"
+                       "   t          Create tag on commit"
+                       "   c          New commit (Ctrl+D to submit)"
+                       "   S          Squash commits"
+                       "   C          Cherry-pick commit"
+                       "   R          Revert commit"
+                       ""
+                       " BRANCHES (panel 3)"
+                       "   n          New branch"
+                       "   Enter      Checkout branch"
+                       "   M          Merge branch into current"
+                       "   D          Delete branch/tag/remote branch"
+                       "   C          Cherry-pick from branch"
+                       "   w          Cycle: Local/Remotes/Tags/Submodules"
+                       "   t          Create tag (in Tags view)"
+                       "   f          Fetch (select remote)"
+                       "   A          Add remote (in Remotes view)"
+                       "   R          Rename remote (in Remotes view)"
+                       "   U          Update submodule (in Submodules view)"
+                       ""
+                       " CONFIG"
+                       "   G          Toggle config viewer"
+                       "   w          Cycle scope (All/Local/Global/System)"
+                       ""
+                       " REMOTE"
+                       "   p          Pull from origin"
+                       "   P          Push to origin"
+                       ""
+                       " STASH (panel 5)"
+                       "   s          Stash changes"
+                       "   g          Pop stash"
+                       "   Enter      Apply stash"
+                       ""
+                       " OTHER"
+                       "   r          Refresh all panels"
+                       "   ?          Toggle this help"
+                       "   q          Quit"
+                       ""
+                       "            Press any key to close"))
+         (help-height (min (+ (length help-lines) 2) (- height 2)))
+         (start-x (max 1 (floor (- width box-width) 2)))
+         (start-y (max 1 (floor (- height help-height) 2))))
+    ;; Set style - cyan on black (less harsh than blue)
+    (fg (color-code :cyan))
+    (bg (color-code :black))
+    ;; Top border
+    (cursor-to start-y start-x)
+    (write-string (concatenate 'string "╔" (make-string (+ content-width 2) :initial-element #\═) "╗") *terminal-io*)
+    ;; Content lines
+    (loop for line in help-lines
+          for y from (1+ start-y)
+          for i from 0
+          while (< i (- help-height 2))
+          do (cursor-to y start-x)
+             (write-string "║ " *terminal-io*)
+             ;; Check if this is a section header (starts with space then uppercase)
+             (let* ((is-header (and (> (length line) 1)
+                                    (char= (char line 0) #\Space)
+                                    (upper-case-p (char line 1))))
+                    (max-len content-width)
+                    (content (if (> (length line) max-len)
+                                (subseq line 0 max-len)
+                                line))
+                    (padding (- max-len (length content))))
+               (when is-header (bold))
+               (write-string content *terminal-io*)
+               (when is-header (reset) (fg (color-code :cyan)) (bg (color-code :black)))
+               (write-string (make-string padding :initial-element #\Space) *terminal-io*))
+             (write-string " ║" *terminal-io*))
+    ;; Bottom border
+    (cursor-to (+ start-y help-height -1) start-x)
+    (write-string (concatenate 'string "╚" (make-string (+ content-width 2) :initial-element #\═) "╝") *terminal-io*)
+    (reset)
+    (finish-output *terminal-io*)))
+
+(defgeneric format-blame-line (blame-line)
+  (:documentation "Format a blame line for display with colors"))
+
+(defmethod format-blame-line ((bl blame-line))
+  "Format a blame-line object as a multi-colored panel item"
+  (let* ((short-hash (blame-line-short-hash bl))
+         (author (blame-line-author bl))
+         (line-num (blame-line-num bl))
+         (content (blame-line-content bl))
+         ;; Truncate author to 12 chars
+         (author-display (if (> (length author) 12)
+                             (subseq author 0 12)
+                             (format nil "~12A" author))))
+    `(:multi-colored
+      (:yellow ,short-hash)
+      (:white " ")
+      (:cyan ,author-display)
+      (:white " ")
+      (:bright-black ,(format nil "~4D" line-num))
+      (:white " │ ")
+      (:white ,content))))
+
+(defgeneric format-cherry-pick-commit (commit)
+  (:documentation "Format a commit for cherry-pick display with colors"))
+
+(defmethod format-cherry-pick-commit ((c log-entry))
+  "Format a log-entry for cherry-pick selection"
+  (let* ((short-hash (log-entry-short-hash c))
+         (author (log-entry-author c))
+         (date (log-entry-date c))
+         (msg (log-entry-message c))
+         ;; Truncate author to 10 chars
+         (author-display (if (> (length author) 10)
+                             (subseq author 0 10)
+                             (format nil "~10A" author))))
+    `(:multi-colored
+      (:yellow ,short-hash)
+      (:white " ")
+      (:cyan ,author-display)
+      (:white " ")
+      (:bright-black ,date)
+      (:white " ")
+      (:green ,msg))))
+
+(defgeneric format-search-result (commit query)
+  (:documentation "Format a commit for search results with query highlighted"))
+
+(defmethod format-search-result ((c log-entry) query)
+  "Format a log-entry for search results display"
+  (let* ((short-hash (log-entry-short-hash c))
+         (author (log-entry-author c))
+         (date (log-entry-date c))
+         (msg (log-entry-message c))
+         ;; Truncate author to 10 chars
+         (author-display (if (> (length author) 10)
+                             (subseq author 0 10)
+                             (format nil "~10A" author)))
+         ;; Check if query matches in message or author
+         (msg-match (search (string-downcase query) (string-downcase msg)))
+         (author-match (search (string-downcase query) (string-downcase author))))
+    `(:multi-colored
+      (:yellow ,short-hash)
+      (:white " ")
+      ,(if author-match
+           `(:bright-cyan ,author-display)
+           `(:cyan ,author-display))
+      (:white " ")
+      (:bright-black ,date)
+      (:white " ")
+      ,(if msg-match
+           `(:bright-green ,msg)
+           `(:green ,msg)))))
 
 (defparameter *spinner-chars* '("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
   "Braille spinner animation frames")
+
+(defun update-runner (view)
+  "Poll active runner and update main panel with output. Returns t if runner is active."
+  (when (active-runner view)
+    (let ((runner (active-runner view)))
+      ;; Poll for new output
+      (runner-poll runner)
+      ;; Update main panel with output
+      (let ((output (runner-get-output runner)))
+        (setf (panel-items (main-panel view))
+              (if output
+                  (append output
+                          (if (runner-finished-p runner)
+                              (list "" 
+                                    (format nil "--- Finished (exit code: ~D) ---" 
+                                            (runner-exit-code runner))
+                                    "Press any key to continue...")
+                              (list "" (runner-title view))))
+                  (list (runner-title view)))))
+      ;; Check if finished and user pressed key
+      (when (runner-finished-p runner)
+        ;; Runner stays active until user dismisses
+        t)
+      t)))
 
 (defun draw-spinner (view row)
   "Draw spinning fetch indicator in bottom left"
@@ -375,6 +717,43 @@
   (incf (spinner-frame view)))
 
 (defmethod handle-key ((view main-view) key)
+  ;; If help overlay is visible, any key dismisses it
+  (when (help-visible view)
+    (setf (help-visible view) nil)
+    (return-from handle-key nil))
+  
+  ;; Toggle help with ?
+  (when (and (key-event-char key) (char= (key-event-char key) #\?))
+    (setf (help-visible view) t)
+    (return-from handle-key nil))
+  
+  ;; If runner is active, handle runner state
+  (when (active-runner view)
+    (let ((runner (active-runner view)))
+      ;; Poll for updates
+      (runner-poll runner)
+      ;; Update display
+      (let ((output (runner-get-output runner)))
+        (setf (panel-items (main-panel view))
+              (append output
+                      (if (runner-finished-p runner)
+                          (list "" 
+                                (format nil "--- Finished (exit code: ~D) ---" 
+                                        (runner-exit-code runner))
+                                "Press any key to continue...")
+                          (list "" (runner-title view))))))
+      ;; If finished and any key pressed, dismiss runner
+      (when (runner-finished-p runner)
+        (runner-stop runner)
+        (setf (active-runner view) nil)
+        (setf (runner-title view) nil)
+        (log-command view "Command completed")
+        (refresh-data view)
+        ;; Return nil to trigger full re-render (not :dialog)
+        (return-from handle-key nil))
+      ;; Runner still running - consume the key
+      (return-from handle-key :dialog)))  ; :dialog prevents re-render since we handle it
+  
   ;; If dialog is active, ALL keys go to dialog - nothing else processes them
   (when (active-dialog view)
     (let ((result (handle-dialog-key (active-dialog view) key)))
@@ -421,34 +800,53 @@
                         (log-command view (format nil "git branch -d ~A" branch-name))
                         (git-delete-branch branch-name)
                         (refresh-data view)))))))
-             ;; Push dialog
+             ;; Delete Tag dialog
+             ((string= (dialog-title dlg) "Delete Tag")
+              (let ((tag-name (getf (dialog-data dlg) :tag-name)))
+                (when tag-name
+                  (log-command view (format nil "git tag -d ~A" tag-name))
+                  (git-delete-tag tag-name)
+                  (refresh-data view))))
+             ;; Create Tag dialog
+             ((string= (dialog-title dlg) "Create Tag")
+              (let ((name (first (dialog-input-lines dlg)))
+                    (commit-hash (getf (dialog-data dlg) :commit-hash)))
+                (when (and name (> (length name) 0))
+                  (if commit-hash
+                      (progn
+                        (log-command view (format nil "git tag ~A ~A" name commit-hash))
+                        (git-run "tag" name commit-hash))
+                      (progn
+                        (log-command view (format nil "git tag ~A" name))
+                        (git-create-tag name)))
+                  (refresh-data view))))
+             ;; Push dialog - start async runner
              ((string= (dialog-title dlg) "Push")
-              (log-command view "git push")
-              ;; Restore terminal for interactive git (credential prompts)
-              (restore-terminal)
-              (git-push-interactive)
-              ;; Re-enter raw mode after git exits
-              (setup-terminal)
-              (log-command view "git push completed")
-              ;; Clear dialog first, then refresh to force full redraw
-              (setf (active-dialog view) nil)
-              (refresh-data view)
-              (clear-screen)
-              (return-from handle-key nil))
-             ;; Pull dialog
+              ;; Check if branch has upstream, if not use --set-upstream
+              (let* ((has-upstream (git-branch-has-upstream-p))
+                     (branch (git-current-branch))
+                     (push-cmd (if has-upstream
+                                   '("git" "push")
+                                   (list "git" "push" "--set-upstream" "origin" branch))))
+                (log-command view (if has-upstream
+                                      "git push"
+                                      (format nil "git push --set-upstream origin ~A" branch)))
+                (setf (active-runner view) (make-process-runner))
+                (setf (runner-title view) "Pushing...")
+                (runner-start (active-runner view) push-cmd)
+                (setf (panel-title (main-panel view)) "[0] Push Output")
+                (setf (panel-items (main-panel view)) 
+                      (list (if has-upstream
+                                "Starting git push..."
+                                (format nil "Setting upstream and pushing ~A..." branch))))))
+             ;; Pull dialog - start async runner
              ((string= (dialog-title dlg) "Pull")
               (log-command view "git pull")
-              ;; Restore terminal for interactive git (credential prompts)
-              (restore-terminal)
-              (git-pull-interactive)
-              ;; Re-enter raw mode after git exits
-              (setup-terminal)
-              (log-command view "git pull completed")
-              ;; Clear dialog first, then refresh to force full redraw
-              (setf (active-dialog view) nil)
-              (refresh-data view)
-              (clear-screen)
-              (return-from handle-key nil))
+              (setf (active-runner view) (make-process-runner))
+              (setf (runner-title view) "Pulling...")
+              (runner-start (active-runner view) '("git" "pull"))
+              (setf (panel-title (main-panel view)) "[0] Pull Output")
+              (setf (panel-items (main-panel view)) (list "Starting git pull...")))
              ;; Squash dialog
              ((string= (dialog-title dlg) "Squash Commits")
               (let ((msg (dialog-get-text dlg)))
@@ -465,6 +863,11 @@
                 (when hash
                   (log-command view (format nil "git cherry-pick ~A" hash))
                   (git-cherry-pick hash)
+                  ;; Exit cherry-pick mode if active
+                  (when (cherry-pick-mode view)
+                    (setf (cherry-pick-mode view) nil)
+                    (setf (cherry-pick-branch view) nil)
+                    (setf (cherry-pick-commits view) nil))
                   (refresh-data view))))
              ;; Revert dialog
              ((string= (dialog-title dlg) "Revert Commit")
@@ -473,21 +876,307 @@
                   (log-command view (format nil "git revert ~A" hash))
                   (git-revert hash)
                   (refresh-data view))))
+             ;; Search Commits dialog
+             ((string= (dialog-title dlg) "Search Commits")
+              (let ((query (first (dialog-input-lines dlg))))
+                (when (and query (> (length query) 0))
+                  (let ((results (git-log-search query)))
+                    (log-command view (format nil "git log --grep=~A" query))
+                    (if results
+                          (progn
+                            (setf (search-mode view) t)
+                            (setf (search-query view) query)
+                            (setf (search-results view) results)
+                            (setf (panel-selected (commits-panel view)) 0)
+                            ;; Update commits panel with search results
+                            (setf (panel-items (commits-panel view))
+                                  (loop for c in results
+                                        collect (format-search-result c query)))
+                            ;; Update panel title to show search
+                            (setf (panel-title (commits-panel view))
+                                  (format nil "[4] Search: ~A (~D results)"
+                                          query (length results))))
+                          ;; No results
+                          (setf (active-dialog view)
+                                (make-dialog :title "Search"
+                                             :message (format nil "No commits found matching '~A'" query)
+                                             :buttons '("OK"))))))))
              ;; Abort Merge dialog
              ((string= (dialog-title dlg) "Abort Merge")
               (log-command view "git merge --abort")
               (git-merge-abort)
-              (refresh-data view))))
+              (refresh-data view))
+             ;; Fetch dialog - handle remote selection
+             ((string= (dialog-title dlg) "Fetch")
+              (let* ((buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (unless (string= selected-button "Cancel")
+                  (if (string= selected-button "All")
+                      (progn
+                        (log-command view "git fetch --all")
+                        (show-status-message "Fetching all..." (screen-width view) (screen-height view))
+                        (git-fetch)
+                        (log-command view "git fetch completed"))
+                      (progn
+                        (log-command view (format nil "git fetch ~A" selected-button))
+                        (show-status-message (format nil "Fetching ~A..." selected-button) 
+                                             (screen-width view) (screen-height view))
+                        (git-fetch selected-button)
+                        (log-command view (format nil "git fetch ~A completed" selected-button))))
+                  (refresh-data view))))
+             ;; Delete Remote Branch dialog
+             ((string= (dialog-title dlg) "Delete Remote Branch")
+              (let ((remote-branch (getf (dialog-data dlg) :remote-branch)))
+                (when remote-branch
+                  (log-command view (format nil "git push --delete ~A" remote-branch))
+                  (git-delete-remote-branch remote-branch)
+                  (refresh-data view))))
+             ;; Rename Remote dialog
+             ((string= (dialog-title dlg) "Rename Remote")
+              (let ((old-name (getf (dialog-data dlg) :old-name))
+                    (new-name (first (dialog-input-lines dlg))))
+                (when (and old-name new-name (> (length new-name) 0))
+                  (log-command view (format nil "git remote rename ~A ~A" old-name new-name))
+                  (git-remote-rename old-name new-name)
+                  (refresh-data view))))
+             ;; Add Remote dialog - two-step process
+             ((string= (dialog-title dlg) "Add Remote")
+              (let ((step (getf (dialog-data dlg) :step))
+                    (input (first (dialog-input-lines dlg))))
+                (cond
+                  ;; Step 1: Got the name, now ask for URL
+                  ((and (eq step :name) input (> (length input) 0))
+                   (setf (active-dialog view)
+                         (make-dialog :title "Add Remote"
+                                      :message (format nil "URL for '~A':" input)
+                                      :input-mode t
+                                      :data (list :step :url :name input)
+                                      :buttons '("Add" "Cancel"))))
+                  ;; Step 2: Got the URL, create the remote
+                  ((eq step :url)
+                   (let ((name (getf (dialog-data dlg) :name)))
+                     (when (and name input (> (length input) 0))
+                       (log-command view (format nil "git remote add ~A ~A" name input))
+                       (git-remote-add name input)
+                       (refresh-data view)))))))
+             ;; Update Submodule dialog
+             ((or (string= (dialog-title dlg) "Update Submodule")
+                  (string= (dialog-title dlg) "Update Submodules"))
+              (let* ((buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons))
+                     (path (getf (dialog-data dlg) :submodule-path)))
+                (cond
+                  ((string= selected-button "Update")
+                   (when path
+                     (log-command view (format nil "git submodule update --init ~A" path))
+                     (show-status-message (format nil "Updating ~A..." path) 
+                                          (screen-width view) (screen-height view))
+                     (git-submodule-update path)
+                     (refresh-data view)))
+                  ((string= selected-button "Update All")
+                   (log-command view "git submodule update --init --recursive")
+                   (show-status-message "Updating all submodules..." 
+                                        (screen-width view) (screen-height view))
+                   (git-submodule-update)
+                   (refresh-data view)))))))
          (setf (active-dialog view) nil))
         ((eq result :cancel)
          (setf (active-dialog view) nil))
         (t
          ;; Dialog is still active, just redraw the dialog only
-         (draw-dialog (active-dialog view) (screen-width view) (screen-height view)))))
-    ;; ALWAYS return here when dialog is active - never fall through to main key handling
-    (return-from handle-key :dialog))
+         (draw-dialog (active-dialog view) (screen-width view) (screen-height view))
+         ;; Return :dialog to skip full re-render while dialog is active
+         (return-from handle-key :dialog))))
+    ;; Dialog was closed - return nil to trigger full re-render
+    (return-from handle-key nil))
   
-  ;; Handle hunk mode first
+  ;; Handle config mode - consume keys in this mode
+  (when (config-mode view)
+    (cond
+      ;; Escape or G exits config mode
+      ((or (eq (key-event-code key) +key-escape+)
+           (and (key-event-char key) (char= (key-event-char key) #\G)))
+       (setf (config-mode view) nil)
+       (setf (config-list view) nil)
+       (setf (config-scope-filter view) nil)
+       (setf (panel-title (main-panel view)) (numbered-title 0 "Main"))
+       (setf (panel-items (main-panel view)) nil)
+       (setf (panel-selected (main-panel view)) 0)
+       (setf (panel-focused (main-panel view)) nil)
+       (refresh-data view)
+       (return-from handle-key nil))
+      ;; w cycles scope filter: All -> Local -> Global -> System -> All
+      ((and (key-event-char key) (char= (key-event-char key) #\w))
+       (setf (config-scope-filter view)
+             (case (config-scope-filter view)
+               ((nil) :local)
+               (:local :global)
+               (:global :system)
+               (:system nil)))
+       (let* ((scope (config-scope-filter view))
+              (configs (git-config-list scope)))
+         (setf (config-list view) configs)
+         (setf (panel-title (main-panel view))
+               (numbered-title 0 "Config" 
+                               (list (case scope
+                                       ((nil) "All")
+                                       (:local "Local")
+                                       (:global "Global")
+                                       (:system "System"))
+                                     "w:cycle")))
+         (setf (panel-items (main-panel view))
+               (loop for cfg in configs
+                     when cfg
+                     collect (let ((cfg-scope (config-scope cfg))
+                                   (key (config-key cfg))
+                                   (val (config-value cfg)))
+                               `(:multi-colored
+                                 (,(case cfg-scope
+                                     (:local :green)
+                                     (:global :yellow)
+                                     (:system :cyan)
+                                     (t :white))
+                                  ,(format nil "~A" key))
+                                 (:bright-black " = ")
+                                 (:white ,val)))))
+         (setf (panel-selected (main-panel view)) 0))
+       (return-from handle-key nil))
+      ;; Navigation
+      ((or (eq (key-event-code key) +key-down+)
+           (and (key-event-char key) (char= (key-event-char key) #\j)))
+       (panel-select-next (main-panel view))
+       (return-from handle-key nil))
+      ((or (eq (key-event-code key) +key-up+)
+           (and (key-event-char key) (char= (key-event-char key) #\k)))
+       (panel-select-prev (main-panel view))
+       (return-from handle-key nil))
+      ;; q quits
+      ((and (key-event-char key) (char= (key-event-char key) #\q))
+       (return-from handle-key :quit))))
+
+  ;; Handle blame mode - consume ALL keys in this mode
+  (when (blame-mode view)
+    (cond
+      ;; Escape exits blame mode
+      ((eq (key-event-code key) +key-escape+)
+       (setf (blame-mode view) nil)
+       (setf (blame-data view) nil)
+       (setf (blame-file view) nil)
+       (setf (panel-focused (main-panel view)) nil)
+       (update-main-content view))
+      ;; Enter shows commit details for selected line
+      ((eq (key-event-code key) +key-enter+)
+       (let* ((blame-lines (blame-data view))
+              (selected (panel-selected (main-panel view))))
+         (when (and blame-lines (< selected (length blame-lines)))
+           (let* ((bl (nth selected blame-lines))
+                  (hash (blame-line-hash bl)))
+             (when (and hash (> (length hash) 0))
+               ;; Show commit message in a dialog
+               (let ((msg (git-commit-message hash)))
+                 (setf (active-dialog view)
+                       (make-dialog :title (format nil "Commit ~A" (blame-line-short-hash bl))
+                                    :message (format nil "Author: ~A~%Date: ~A~%~%~A"
+                                                     (blame-line-author bl)
+                                                     (blame-line-date bl)
+                                                     (string-trim '(#\Newline #\Space) msg))
+                                    :buttons '("OK")))))))))
+      ;; Navigation in blame view
+      ((or (eq (key-event-code key) +key-down+)
+           (and (key-event-char key) (char= (key-event-char key) #\j)))
+       (panel-select-next (main-panel view)))
+      ((or (eq (key-event-code key) +key-up+)
+           (and (key-event-char key) (char= (key-event-char key) #\k)))
+       (panel-select-prev (main-panel view))))
+    ;; Always return nil in blame mode to trigger re-render
+    (return-from handle-key nil))
+  
+  ;; Handle cherry-pick mode - viewing commits from another branch
+  (when (cherry-pick-mode view)
+    (cond
+      ;; Escape exits cherry-pick mode
+      ((eq (key-event-code key) +key-escape+)
+       (setf (cherry-pick-mode view) nil)
+       (setf (cherry-pick-branch view) nil)
+       (setf (cherry-pick-commits view) nil)
+       (update-main-content view))
+      ;; Enter or C cherry-picks the selected commit
+      ((or (eq (key-event-code key) +key-enter+)
+           (and (key-event-char key) (char= (key-event-char key) #\C)))
+       (let* ((commits (cherry-pick-commits view))
+              (selected (panel-selected (main-panel view))))
+         (when (and commits (< selected (length commits)))
+           (let* ((commit (nth selected commits))
+                  (hash (log-entry-hash commit))
+                  (short-hash (log-entry-short-hash commit))
+                  (msg (log-entry-message commit)))
+             (setf (active-dialog view)
+                   (make-dialog :title "Cherry Pick"
+                                :message (format nil "Cherry-pick ~A from ~A?~%~%~A"
+                                                 short-hash 
+                                                 (cherry-pick-branch view)
+                                                 msg)
+                                :data (list :hash hash :from-branch (cherry-pick-branch view))
+                                :buttons '("Pick" "Cancel")))))))
+      ;; Navigation
+      ((or (eq (key-event-code key) +key-down+)
+           (and (key-event-char key) (char= (key-event-char key) #\j)))
+       (panel-select-next (main-panel view)))
+      ((or (eq (key-event-code key) +key-up+)
+           (and (key-event-char key) (char= (key-event-char key) #\k)))
+       (panel-select-prev (main-panel view))))
+    ;; Always return nil in cherry-pick mode to trigger re-render
+    (return-from handle-key nil))
+  
+  ;; Handle search mode - viewing filtered commits
+  (when (search-mode view)
+    (cond
+      ;; Escape exits search mode
+      ((eq (key-event-code key) +key-escape+)
+       (setf (search-mode view) nil)
+       (setf (search-query view) nil)
+       (setf (search-results view) nil)
+       ;; Reset panel title
+       (setf (panel-title (commits-panel view))
+             (numbered-title 4 "Commits" '("Reflog")))
+       (refresh-data view))
+      ;; Enter shows commit details
+      ((eq (key-event-code key) +key-enter+)
+       (let* ((commits (search-results view))
+              (selected (panel-selected (commits-panel view))))
+         (when (and commits (< selected (length commits)))
+           (let* ((commit (nth selected commits))
+                  (hash (log-entry-hash commit))
+                  (short-hash (log-entry-short-hash commit)))
+             (when hash
+               (let ((msg (git-commit-message hash)))
+                 (setf (active-dialog view)
+                       (make-dialog :title (format nil "Commit ~A" short-hash)
+                                    :message (format nil "Author: ~A~%Date: ~A~%~%~A"
+                                                     (log-entry-author commit)
+                                                     (log-entry-date commit)
+                                                     (string-trim '(#\Newline #\Space) msg))
+                                    :buttons '("OK")))))))))
+      ;; / to search again
+      ((and (key-event-char key) (char= (key-event-char key) #\/))
+       (setf (active-dialog view)
+             (make-dialog :title "Search Commits"
+                          :message "Enter search term:"
+                          :input-mode t
+                          :buttons '("Search" "Cancel"))))
+      ;; Navigation
+      ((or (eq (key-event-code key) +key-down+)
+           (and (key-event-char key) (char= (key-event-char key) #\j)))
+       (panel-select-next (commits-panel view)))
+      ((or (eq (key-event-code key) +key-up+)
+           (and (key-event-char key) (char= (key-event-char key) #\k)))
+       (panel-select-prev (commits-panel view))))
+    ;; Always return nil in search mode to trigger re-render
+    (return-from handle-key nil))
+  
+  ;; Handle hunk mode
   (when (hunk-mode view)
     (cond
       ;; Escape exits hunk mode
@@ -620,6 +1309,44 @@
       ((and (key-event-char key) (char= (key-event-char key) #\r))
        (refresh-data view)
        nil)
+      ;; Config viewer - 'G' (capital) toggles config mode
+      ((and (key-event-char key) (char= (key-event-char key) #\G))
+       (if (config-mode view)
+           ;; Exit config mode
+           (progn
+             (setf (config-mode view) nil)
+             (setf (config-list view) nil)
+             (setf (config-scope-filter view) nil)
+             (setf (panel-title (main-panel view)) (numbered-title 0 "Main"))
+             (setf (panel-items (main-panel view)) nil)
+             (setf (panel-selected (main-panel view)) 0)
+             (refresh-data view))
+           ;; Enter config mode
+           (progn
+             (setf (config-mode view) t)
+             (setf (config-scope-filter view) nil)  ; Show all
+             (let ((configs (git-config-list)))
+               (setf (config-list view) configs)
+               (setf (panel-title (main-panel view)) 
+                     (numbered-title 0 "Config" '("All" "w:cycle scope")))
+               (setf (panel-items (main-panel view))
+                     (loop for cfg in configs
+                           when cfg
+                           collect (let ((scope (config-scope cfg))
+                                         (key (config-key cfg))
+                                         (val (config-value cfg)))
+                                     `(:multi-colored
+                                       (,(case scope
+                                           (:local :green)
+                                           (:global :yellow)
+                                           (:system :cyan)
+                                           (t :white))
+                                        ,(format nil "~A" key))
+                                       (:bright-black " = ")
+                                       (:white ,val)))))
+               (setf (panel-selected (main-panel view)) 0)
+               (setf (panel-focused (main-panel view)) t))))
+       nil)
       ;; Commit - 'c' opens commit dialog (multiline)
       ((and (key-event-char key) (char= (key-event-char key) #\c))
        (setf (active-dialog view)
@@ -675,18 +1402,37 @@
                  (git-resolve-with-ours (status-entry-file entry))
                  (refresh-data view))))))
        nil)
-      ;; Resolve conflict with theirs - 't' (when on files panel with conflict)
+      ;; 't' key - context dependent (conflict resolution, create tag)
       ((and (key-event-char key) (char= (key-event-char key) #\t))
-       (when (= focused-idx 1)  ; Files panel
-         (let* ((entries (status-entries view))
-                (selected (panel-selected panel)))
-           (when (and entries (< selected (length entries)))
-             (let ((entry (nth selected entries)))
-               (when (eq (status-entry-status entry) :conflict)
-                 (log-command view (format nil "git checkout --theirs ~A && git add ~A"
-                                           (status-entry-file entry) (status-entry-file entry)))
-                 (git-resolve-with-theirs (status-entry-file entry))
-                 (refresh-data view))))))
+       (cond
+         ;; On files panel - resolve conflict with theirs
+         ((= focused-idx 1)
+          (let* ((entries (status-entries view))
+                 (selected (panel-selected panel)))
+            (when (and entries (< selected (length entries)))
+              (let ((entry (nth selected entries)))
+                (when (eq (status-entry-status entry) :conflict)
+                  (log-command view (format nil "git checkout --theirs ~A && git add ~A"
+                                            (status-entry-file entry) (status-entry-file entry)))
+                  (git-resolve-with-theirs (status-entry-file entry))
+                  (refresh-data view))))))
+         ;; On commits panel - create tag on selected commit
+         ((= focused-idx 3)
+          (let* ((commits (commit-list view))
+                 (selected (panel-selected panel)))
+            (when (and commits (< selected (length commits)))
+              (let ((commit (nth selected commits)))
+                (setf (active-dialog view)
+                      (make-dialog :title "Create Tag"
+                                   :input-mode t
+                                   :data (list :commit-hash (log-entry-hash commit))
+                                   :buttons '("Create" "Cancel")))))))
+         ;; On branches panel in tags view - create tag on HEAD
+         ((and (= focused-idx 2) (show-tags view))
+          (setf (active-dialog view)
+                (make-dialog :title "Create Tag"
+                             :input-mode t
+                             :buttons '("Create" "Cancel")))))
        nil)
       ;; Abort merge - 'X' (capital, when on files panel)
       ((and (key-event-char key) (char= (key-event-char key) #\X))
@@ -716,21 +1462,50 @@
                             :input-mode t
                             :buttons '("Create" "Cancel"))))
        nil)
-      ;; Fetch - 'f' (when on branches panel)
+      ;; Fetch - 'f' (when on branches panel) - show remote selection
       ((and (key-event-char key) (char= (key-event-char key) #\f))
        (when (= focused-idx 2)  ; Branches panel
-         (log-command view "git fetch --all")
-         (show-status-message "Fetching..." (screen-width view) (screen-height view))
-         (git-fetch)
-         (log-command view "git fetch completed")
-         (refresh-data view))
+         (let ((remotes (git-remotes)))
+           (if remotes
+               ;; Show selection dialog with remotes
+               (setf (active-dialog view)
+                     (make-dialog :title "Fetch"
+                                  :message "Select remote to fetch from:"
+                                  :buttons (if (> (length remotes) 1)
+                                               (append remotes '("All" "Cancel"))
+                                               (append remotes '("Cancel")))
+                                  :data (list :remotes remotes)))
+               ;; No remotes configured
+               (setf (active-dialog view)
+                     (make-dialog :title "Fetch"
+                                  :message "No remotes configured"
+                                  :buttons '("OK"))))))
        nil)
-      ;; Toggle local/remote branches - 'w' (when on branches panel)
+      ;; Toggle views - 'w' (when on files or branches panel)
       ((and (key-event-char key) (char= (key-event-char key) #\w))
-       (when (= focused-idx 2)  ; Branches panel
-         (setf (show-remote-branches view) (not (show-remote-branches view)))
-         (setf (panel-selected (branches-panel view)) 0)  ; Reset selection
-         (refresh-data view))
+       (cond
+         ;; Files panel - toggle Files/Worktrees
+         ((= focused-idx 1)
+          (setf (show-worktrees view) (not (show-worktrees view)))
+          (setf (panel-selected (files-panel view)) 0)
+          (refresh-data view))
+         ;; Branches panel - cycle Local -> Remotes -> Tags -> Submodules -> Local
+         ((= focused-idx 2)
+          (cond
+            ((show-submodules view)
+             (setf (show-submodules view) nil)
+             (setf (show-tags view) nil)
+             (setf (show-remote-branches view) nil))
+            ((show-tags view)
+             (setf (show-tags view) nil)
+             (setf (show-submodules view) t))
+            ((show-remote-branches view)
+             (setf (show-remote-branches view) nil)
+             (setf (show-tags view) t))
+            (t
+             (setf (show-remote-branches view) t)))
+          (setf (panel-selected (branches-panel view)) 0)  ; Reset selection
+          (refresh-data view)))
        nil)
       ;; Merge - 'M' (capital, when on branches panel)
       ((and (key-event-char key) (char= (key-event-char key) #\M))
@@ -749,18 +1524,114 @@
                  (setf (dialog-message (active-dialog view))
                        (format nil "~A|~A" branch (current-branch view))))))))
        nil)
-      ;; Delete branch - 'D' (capital, when on branches panel)
+      ;; Delete branch, tag, or remote - 'D' (capital, when on branches panel)
       ((and (key-event-char key) (char= (key-event-char key) #\D))
+       (when (= focused-idx 2)  ; Branches panel
+         (cond
+           ;; Delete tag
+           ((show-tags view)
+            (let* ((tags (tag-list view))
+                   (selected (panel-selected panel)))
+              (when (and tags (< selected (length tags)))
+                (let ((tag (nth selected tags)))
+                  (setf (active-dialog view)
+                        (make-dialog :title "Delete Tag"
+                                     :message (format nil "Delete tag ~A?" (tag-name tag))
+                                     :data (list :tag-name (tag-name tag))
+                                     :buttons '("Delete" "Cancel")))))))
+           ;; Delete remote branch (when in remotes view)
+           ((show-remote-branches view)
+            (let* ((remote-branches (remote-branch-list view))
+                   (selected (panel-selected panel)))
+              (when (and remote-branches (< selected (length remote-branches)))
+                (let ((remote-branch (nth selected remote-branches)))
+                  (setf (active-dialog view)
+                        (make-dialog :title "Delete Remote Branch"
+                                     :message (format nil "Delete remote branch ~A?" remote-branch)
+                                     :data (list :remote-branch remote-branch)
+                                     :buttons '("Delete" "Cancel")))))))
+           ;; Delete branch
+           (t
+            (let* ((branches (branch-list view))
+                   (selected (panel-selected panel)))
+              (when (and branches (< selected (length branches)))
+                (let ((branch (nth selected branches)))
+                  (unless (string= branch (current-branch view))
+                    (setf (active-dialog view)
+                          (make-dialog :title "Delete Branch"
+                                       :message (format nil "Delete branch ~A?" branch)
+                                       :buttons '("Delete" "Cancel"))))))))))
+       nil)
+      ;; Update submodule - 'U' (capital, when on branches panel in submodules view)
+      ((and (key-event-char key) (char= (key-event-char key) #\U))
+       (when (and (= focused-idx 2) (show-submodules view))
+         (let* ((submodules (submodule-list view))
+                (selected (panel-selected panel)))
+           (if (and submodules (< selected (length submodules)))
+               ;; Update selected submodule
+               (let ((sm (nth selected submodules)))
+                 (setf (active-dialog view)
+                       (make-dialog :title "Update Submodule"
+                                    :message (format nil "Update submodule '~A'?" (submodule-name sm))
+                                    :data (list :submodule-path (submodule-path sm))
+                                    :buttons '("Update" "Update All" "Cancel"))))
+               ;; No submodules or invalid selection - offer to update all
+               (setf (active-dialog view)
+                     (make-dialog :title "Update Submodules"
+                                  :message "Update all submodules?"
+                                  :buttons '("Update All" "Cancel"))))))
+       nil)
+      ;; Add remote - 'A' (capital, when on branches panel in remotes view)
+      ((and (key-event-char key) (char= (key-event-char key) #\A))
+       (when (and (= focused-idx 2) (show-remote-branches view))
+         (setf (active-dialog view)
+               (make-dialog :title "Add Remote"
+                            :message "Remote name:"
+                            :input-mode t
+                            :data (list :step :name)
+                            :buttons '("Next" "Cancel"))))
+       nil)
+      ;; Rename remote - 'R' (capital, when on branches panel in remotes view)
+      ((and (key-event-char key) (char= (key-event-char key) #\R))
+       (when (and (= focused-idx 2) (show-remote-branches view))
+         (let* ((remote-branches (remote-branch-list view))
+                (selected (panel-selected panel)))
+           (when (and remote-branches (< selected (length remote-branches)))
+             (let* ((remote-branch (nth selected remote-branches))
+                    (remote (first (cl-ppcre:split "/" remote-branch :limit 2))))
+               (setf (active-dialog view)
+                     (make-dialog :title "Rename Remote"
+                                  :message (format nil "New name for '~A':" remote)
+                                  :input-mode t
+                                  :data (list :old-name remote)
+                                  :buttons '("Rename" "Cancel")))))))
+       nil)
+       ;; Cherry-pick from branch - 'C' (capital, when on branches panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\C))
        (when (= focused-idx 2)  ; Branches panel
          (let* ((branches (branch-list view))
                 (selected (panel-selected panel)))
            (when (and branches (< selected (length branches)))
              (let ((branch (nth selected branches)))
                (unless (string= branch (current-branch view))
-                 (setf (active-dialog view)
-                       (make-dialog :title "Delete Branch"
-                                    :message (format nil "Delete branch ~A?" branch)
-                                    :buttons '("Delete" "Cancel"))))))))
+                 ;; Get commits unique to that branch
+                 (let ((commits (git-log-branch-only branch :count 50)))
+                   (if commits
+                       (progn
+                         (setf (cherry-pick-mode view) t)
+                         (setf (cherry-pick-branch view) branch)
+                         (setf (cherry-pick-commits view) commits)
+                         (setf (panel-selected (main-panel view)) 0)
+                         ;; Format commits for display
+                         (setf (panel-items (main-panel view))
+                               (loop for c in commits
+                                     collect (format-cherry-pick-commit c))))
+                       ;; No unique commits
+                       (setf (active-dialog view)
+                             (make-dialog :title "Cherry Pick"
+                                          :message (format nil "No commits in ~A that aren't already in ~A"
+                                                           branch (current-branch view))
+                                          :buttons '("OK"))))))))))
        nil)
       ;; Squash commits - 'S' (capital, when on commits panel)
       ((and (key-event-char key) (char= (key-event-char key) #\S))
@@ -808,6 +1679,36 @@
                                   :data (list :hash hash)
                                   :buttons '("Revert" "Cancel")))))))
        nil)
+      ;; Search commits - '/' (when on commits panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\/))
+       (when (= focused-idx 3)  ; Commits panel
+         (setf (active-dialog view)
+               (make-dialog :title "Search Commits"
+                            :input-mode t
+                            :buttons '("Search" "Cancel"))))
+       nil)
+      ;; Blame view - 'b' (when on files panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\b))
+       (when (= focused-idx 1)  ; Files panel
+         (let* ((entries (status-entries view))
+                (selected (panel-selected panel)))
+           (when (and entries (< selected (length entries)))
+             (let* ((entry (nth selected entries))
+                    (file (status-entry-file entry)))
+               ;; Get blame data for the file
+               (let ((blame (git-blame file)))
+                 (when blame
+                   (setf (blame-mode view) t)
+                   (setf (blame-data view) blame)
+                   (setf (blame-file view) file)
+                   (setf (panel-selected (main-panel view)) 0)
+                   ;; Set main panel as focused for selection highlight
+                   (setf (panel-focused (main-panel view)) t)
+                   ;; Format blame lines with colors for display
+                   (setf (panel-items (main-panel view))
+                         (loop for bl in blame
+                               collect (format-blame-line bl)))))))))
+       nil)
       ;; Edit/Hunk staging - 'e' (when on files panel)
       ;; For conflicts: spawn editor. For normal files: hunk staging mode
       ((and (key-event-char key) (char= (key-event-char key) #\e))
@@ -823,10 +1724,10 @@
                  ((eq status :conflict)
                   (log-command view (format nil "$EDITOR ~A" file))
                   ;; Restore terminal before spawning editor
-                  (restore-terminal)
+                  (gilt.terminal:restore-terminal)
                   (git-edit-file file)
                   ;; Re-enter raw mode after editor exits
-                  (setup-terminal)
+                  (gilt.terminal:setup-terminal)
                   (clear-screen)
                   (refresh-data view))
                  ;; Normal file - hunk staging mode
@@ -845,8 +1746,3 @@
        nil)
       (t nil))))
 
-;;; Legacy views for compatibility (redirect to main-view)
-
-(defclass status-view (main-view) ())
-(defclass log-view (main-view) ())
-(defclass branches-view (main-view) ())

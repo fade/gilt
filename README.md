@@ -1,5 +1,7 @@
 # Gilt
 
+**Git Interface for Lisp Terminal**
+
 A LazyGit-style Git TUI written in Common Lisp.
 
 ## Features
@@ -10,6 +12,14 @@ A LazyGit-style Git TUI written in Common Lisp.
 - **Fast and responsive** - Lightweight terminal interface
 - **CLOS architecture** - Clean, extensible object-oriented design
 - **Comprehensive Git operations** - Stage, commit, push, pull, merge, cherry-pick, and more
+- **Git blame view** - View file blame with commit info
+- **Commit search** - Filter commits by message or author
+- **Tag support** - Create, delete, and view tags
+- **Remote management** - Add, rename remotes; delete remote branches
+- **Submodule support** - View and update submodules
+- **Worktree management** - View and manage multiple working directories
+- **Config viewer** - Browse git config (local/global/system)
+- **Status bar** - Branch tracking info and operation status
 
 ## Requirements
 
@@ -58,7 +68,10 @@ See **[GUIDE.md](GUIDE.md)** for the complete user guide including:
 - Screen layout and panel descriptions
 - All keybindings
 - Common workflows (staging, committing, merging, squashing, etc.)
+- New features: blame view, commit search, tags, remotes, submodules, worktrees, config viewer
 - Troubleshooting tips
+
+See **[CHANGELOG.md](CHANGELOG.md)** for version history.
 
 ## Architecture
 

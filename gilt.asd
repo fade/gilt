@@ -13,5 +13,6 @@
                              (:file "terminal")
                              (:file "ui")
                              (:file "git")
+                             (:file "pty")
                              (:file "views")
                              (:file "main")))))

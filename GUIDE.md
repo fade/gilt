@@ -1,5 +1,7 @@
 # Gilt User Guide
 
+**Gilt - Git Interface for Lisp Terminal**
+
 A comprehensive guide to using Gilt, the LazyGit-style Git TUI written in Common Lisp.
 
 ## Overview
@@ -84,6 +86,7 @@ Each commit line shows:
 | `Space` | Stage/unstage selected file |
 | `a` | Stage all files |
 | `e` | Edit file (conflicts) or enter hunk staging mode |
+| `b` | Blame view - show git blame for file |
 | `d` | Discard changes to selected file |
 | `o` | Resolve conflict with "ours" (your version) |
 | `t` | Resolve conflict with "theirs" (incoming version) |
@@ -92,6 +95,21 @@ Each commit line shows:
 | `c` | Open commit dialog |
 | `P` (capital) | Push to remote |
 | `p` (lowercase) | Pull from remote |
+| `w` | Toggle: Files ↔ Worktrees view |
+
+### Worktrees View (in Files Panel)
+
+Press `w` in the Files panel to switch to Worktrees view.
+
+| Key | Action |
+|-----|--------|
+| `w` | Toggle back to Files view |
+
+Worktrees are color-coded:
+- **Green** = Normal worktree with branch
+- **Yellow** = Detached HEAD
+- **Red** = Locked worktree
+- **Gray** = Bare repository
 
 ### Branches Panel `[3]`
 
@@ -99,15 +117,48 @@ Each commit line shows:
 |-----|--------|
 | `Enter` | Checkout branch (local) or track remote branch |
 | `n` | Create new branch |
-| `w` | Toggle between Local branches and Remotes view |
-| `f` | Fetch from all remotes |
+| `w` | Cycle: Local → Remotes → Tags → Submodules |
+| `f` | Fetch (select remote) |
 | `M` (capital) | Merge selected branch into current |
 | `D` (capital) | Delete selected branch |
+| `C` (capital) | Cherry-pick commits from selected branch |
+
+### Remotes View (in Branches Panel)
+
+Press `w` once from Local branches to reach Remotes view.
+
+| Key | Action |
+|-----|--------|
+| `A` (capital) | Add new remote |
+| `R` (capital) | Rename selected remote |
+| `D` (capital) | Delete selected remote branch |
+| `w` | Cycle to Tags view |
+
+### Tags View (in Branches Panel)
+
+Press `w` twice from Local branches to reach Tags view.
+
+| Key | Action |
+|-----|--------|
+| `t` | Create tag on HEAD |
+| `D` (capital) | Delete selected tag |
+| `w` | Cycle to Submodules view |
+
+### Submodules View (in Branches Panel)
+
+Press `w` three times from Local branches to reach Submodules view.
+
+| Key | Action |
+|-----|--------|
+| `U` (capital) | Update selected submodule (or all) |
+| `w` | Cycle back to Local branches |
 
 ### Commits Panel `[4]`
 
 | Key | Action |
 |-----|--------|
+| `/` | Search commits by message or author |
+| `t` | Create tag on selected commit |
 | `S` (capital) | Squash commits (select target commit) |
 | `C` (capital) | Cherry-pick selected commit |
 | `R` (capital) | Revert selected commit |
@@ -118,6 +169,22 @@ Each commit line shows:
 |-----|--------|
 | `s` | Create new stash |
 | `g` | Pop (apply and remove) top stash |
+
+### Config Viewer
+
+Press `G` (capital) to toggle the config viewer in the main panel.
+
+| Key | Action |
+|-----|--------|
+| `G` (capital) | Toggle config viewer on/off |
+| `w` | Cycle scope: All → Local → Global → System |
+| `Escape` | Exit config viewer |
+| `j/k` or arrows | Navigate config entries |
+
+Config entries are color-coded by scope:
+- **Green** = Local (repo-specific)
+- **Yellow** = Global (user-level)
+- **Cyan** = System (system-wide)
 
 ### Dialog Navigation
 
@@ -197,6 +264,43 @@ Create a new commit that undoes a previous commit:
 2. Select the commit you want to revert
 3. Press `R` (capital)
 4. Confirm in the dialog (creates a new revert commit)
+
+### Viewing Git Blame
+
+See who last modified each line of a file:
+
+1. Navigate to the **Files panel** (`Tab` or press `2`)
+2. Select a file
+3. Press `b` to enter blame view
+4. The **Main panel** shows blame info: commit hash, author, line number, content
+5. Use `j`/`k` to navigate lines
+6. Press `Enter` to see full commit details for the selected line
+7. Press `Escape` to exit blame view
+
+### Searching Commits
+
+Filter the commit log by message or author:
+
+1. Navigate to the **Commits panel** (`Tab` or press `4`)
+2. Press `/` to open the search dialog
+3. Type your search term (matches commit messages and author names)
+4. Press `Enter` to search
+5. Results are displayed with matches highlighted
+6. Press `/` again to search for something else
+7. Press `Escape` to exit search mode and return to full commit list
+
+### Cherry-Picking from Another Branch
+
+Apply commits from another branch to your current branch:
+
+1. Navigate to the **Branches panel** (`Tab` or press `3`)
+2. Select the branch you want to cherry-pick FROM (not your current branch)
+3. Press `C` (capital)
+4. The **Main panel** shows commits unique to that branch
+5. Use `j`/`k` to select a commit
+6. Press `Enter` or `C` to cherry-pick the selected commit
+7. Confirm in the dialog
+8. Press `Escape` to exit without cherry-picking
 
 ### Stashing Changes
 

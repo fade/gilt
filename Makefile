@@ -15,7 +15,9 @@ $(BINARY): build.lisp gilt.asd src/*.lisp
 
 # Run from source (development)
 run:
-	sbcl --eval "(push #p\"$(PWD)/\" asdf:*central-registry*)" \
+	sbcl --eval "(require :asdf)" \
+	     --eval "(load \"~/quicklisp/setup.lisp\")" \
+	     --eval "(push #p\"$(PWD)/\" asdf:*central-registry*)" \
 	     --eval "(ql:quickload :gilt)" \
 	     --eval "(gilt:run)"
 
@@ -39,13 +41,17 @@ clean:
 
 # Load and test in REPL
 repl:
-	sbcl --eval "(push #p\"$(PWD)/\" asdf:*central-registry*)" \
+	sbcl --eval "(require :asdf)" \
+	     --eval "(load \"~/quicklisp/setup.lisp\")" \
+	     --eval "(push #p\"$(PWD)/\" asdf:*central-registry*)" \
 	     --eval "(ql:quickload :gilt)"
 
 # Check syntax without running
 check:
-	sbcl --eval "(push #p\"$(PWD)/\" asdf:*central-registry*)" \
-	     --eval "(asdf:load-system :gilt)" \
+	sbcl --eval "(require :asdf)" \
+	     --eval "(load \"~/quicklisp/setup.lisp\")" \
+	     --eval "(push #p\"$(PWD)/\" asdf:*central-registry*)" \
+	     --eval "(ql:quickload :gilt)" \
 	     --eval "(sb-ext:exit)"
 
 help:

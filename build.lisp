@@ -2,13 +2,16 @@
 
 (require :asdf)
 
+;; Load Quicklisp
+(load (merge-pathnames "quicklisp/setup.lisp" (user-homedir-pathname)))
+
 ;; Add project to ASDF search path
 (push (truename ".") asdf:*central-registry*)
 
 ;; Load the system
 (format t "Loading gilt...~%")
 (force-output)
-(asdf:load-system :gilt)
+(ql:quickload :gilt)
 (format t "System loaded. Building executable...~%")
 (force-output)
 
