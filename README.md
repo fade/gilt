@@ -17,7 +17,7 @@ A LazyGit-style Git TUI written in Common Lisp.
 - **Tag support** - Create, delete, and view tags
 - **Remote management** - Add, rename remotes; delete remote branches
 - **Submodule support** - View and update submodules
-- **Worktree management** - View and manage multiple working directories
+- **Worktree management** - View, add, and remove working directories
 - **Config viewer** - Browse git config (local/global/system)
 - **Status bar** - Branch tracking info and operation status
 

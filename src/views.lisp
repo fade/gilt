@@ -527,6 +527,8 @@
                        "   t          Resolve conflict: keep theirs"
                        "   X          Abort merge"
                        "   w          Toggle: Files/Worktrees"
+                       "   A          Add worktree (in Worktrees view)"
+                       "   D          Remove worktree (in Worktrees view)"
                        ""
                        " COMMITS (panel 4)"
                        "   /          Search commits"
@@ -980,6 +982,51 @@
                    (show-status-message "Updating all submodules..." 
                                         (screen-width view) (screen-height view))
                    (git-submodule-update)
+                   (refresh-data view)))))
+             ;; Add Worktree dialog
+             ((string= (dialog-title dlg) "Add Worktree")
+              (let* ((path (first (dialog-input-lines dlg)))
+                     (buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (when (and path (> (length path) 0))
+                  (cond
+                    ((string= selected-button "Add")
+                     ;; Add worktree for current branch (detached)
+                     (log-command view (format nil "git worktree add --detach ~A" path))
+                     (git-worktree-add path)
+                     (refresh-data view))
+                    ((string= selected-button "New Branch")
+                     ;; Ask for branch name
+                     (setf (active-dialog view)
+                           (make-dialog :title "Add Worktree"
+                                        :message (format nil "Branch name for ~A:" path)
+                                        :input-mode t
+                                        :data (list :path path :step :branch)
+                                        :buttons '("Create" "Cancel"))))))))
+             ;; Add Worktree - step 2 (branch name)
+             ((and (string= (dialog-title dlg) "Add Worktree")
+                   (eq (getf (dialog-data dlg) :step) :branch))
+              (let ((path (getf (dialog-data dlg) :path))
+                    (branch (first (dialog-input-lines dlg))))
+                (when (and path branch (> (length branch) 0))
+                  (log-command view (format nil "git worktree add -b ~A ~A" branch path))
+                  (git-worktree-add-new-branch path branch)
+                  (refresh-data view))))
+             ;; Remove Worktree dialog
+             ((string= (dialog-title dlg) "Remove Worktree")
+              (let* ((path (getf (dialog-data dlg) :worktree-path))
+                     (buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (cond
+                  ((string= selected-button "Remove")
+                   (log-command view (format nil "git worktree remove ~A" path))
+                   (git-worktree-remove path)
+                   (refresh-data view))
+                  ((string= selected-button "Force Remove")
+                   (log-command view (format nil "git worktree remove --force ~A" path))
+                   (git-worktree-remove path t)
                    (refresh-data view)))))))
          (setf (active-dialog view) nil))
         ((eq result :cancel)
@@ -1480,6 +1527,30 @@
                      (make-dialog :title "Fetch"
                                   :message "No remotes configured"
                                   :buttons '("OK"))))))
+       nil)
+      ;; Add worktree - 'A' (capital, when on files panel in worktrees view)
+      ((and (key-event-char key) (char= (key-event-char key) #\A))
+       (when (and (= focused-idx 1) (show-worktrees view))
+         (setf (active-dialog view)
+               (make-dialog :title "Add Worktree"
+                            :message "Enter path for new worktree:"
+                            :input-mode t
+                            :buttons '("Add" "New Branch" "Cancel"))))
+       nil)
+      ;; Remove worktree - 'D' (capital, when on files panel in worktrees view)
+      ((and (key-event-char key) (char= (key-event-char key) #\D))
+       (when (and (= focused-idx 1) (show-worktrees view))
+         (let* ((worktrees (worktree-list view))
+                (selected (panel-selected (files-panel view))))
+           (when (and worktrees (< selected (length worktrees)))
+             (let ((wt (nth selected worktrees)))
+               ;; Don't allow removing the main worktree (first one, usually bare or main)
+               (when (> selected 0)
+                 (setf (active-dialog view)
+                       (make-dialog :title "Remove Worktree"
+                                    :message (format nil "Remove worktree at ~A?" (worktree-path wt))
+                                    :data (list :worktree-path (worktree-path wt))
+                                    :buttons '("Remove" "Force Remove" "Cancel"))))))))
        nil)
       ;; Toggle views - 'w' (when on files or branches panel)
       ((and (key-event-char key) (char= (key-event-char key) #\w))

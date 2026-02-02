@@ -104,6 +104,8 @@ Press `w` in the Files panel to switch to Worktrees view.
 | Key | Action |
 |-----|--------|
 | `w` | Toggle back to Files view |
+| `A` (capital) | Add new worktree |
+| `D` (capital) | Remove selected worktree |
 
 Worktrees are color-coded:
 - **Green** = Normal worktree with branch
