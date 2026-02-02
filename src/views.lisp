@@ -952,6 +952,66 @@
                   (log-command view (format nil "git revert ~A" hash))
                   (git-revert hash)
                   (refresh-data view))))
+             ;; Amend Commit dialog
+             ((string= (dialog-title dlg) "Amend Commit")
+              (let* ((buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (cond
+                  ((string= selected-button "Amend")
+                   (log-command view "git commit --amend --no-edit")
+                   (git-amend)
+                   (refresh-data view))
+                  ((string= selected-button "Amend with new message")
+                   ;; Show another dialog for the new message
+                   (let ((current-msg (git-commit-message "HEAD")))
+                     (setf (active-dialog view)
+                           (make-dialog :title "Amend Message"
+                                        :message "Enter new commit message:"
+                                        :input-mode t
+                                        :multiline t
+                                        :buttons '("Amend" "Cancel")))
+                     ;; Pre-fill with current message
+                     (setf (dialog-input-lines (active-dialog view))
+                           (cl-ppcre:split "\\n" (string-trim '(#\Newline #\Space) current-msg))))))))
+             ;; Amend Message dialog (second step)
+             ((string= (dialog-title dlg) "Amend Message")
+              (let* ((lines (dialog-input-lines dlg))
+                     (message (format nil "~{~A~^~%~}" lines)))
+                (when (> (length message) 0)
+                  (log-command view "git commit --amend -m ...")
+                  (git-amend-message message)
+                  (refresh-data view))))
+             ;; Reset to Commit dialog
+             ((string= (dialog-title dlg) "Reset to Commit")
+              (let* ((hash (getf (dialog-data dlg) :hash))
+                     (buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (when hash
+                  (cond
+                    ((string= selected-button "Soft")
+                     (log-command view (format nil "git reset --soft ~A" hash))
+                     (git-reset-soft hash)
+                     (refresh-data view))
+                    ((string= selected-button "Mixed")
+                     (log-command view (format nil "git reset --mixed ~A" hash))
+                     (git-reset-mixed hash)
+                     (refresh-data view))
+                    ((string= selected-button "Hard")
+                     (log-command view (format nil "git reset --hard ~A" hash))
+                     (git-reset-hard hash)
+                     (refresh-data view))))))
+             ;; Fixup Commit dialog
+             ((string= (dialog-title dlg) "Fixup Commit")
+              (let* ((hash (getf (dialog-data dlg) :hash))
+                     (buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (when (and hash (string= selected-button "Fixup"))
+                  (log-command view (format nil "git commit --fixup ~A" hash))
+                  (git-fixup-commit hash)
+                  (refresh-data view))))
              ;; Search Commits dialog
              ((string= (dialog-title dlg) "Search Commits")
               (let ((query (first (dialog-input-lines dlg))))
@@ -1944,6 +2004,47 @@
                                   :message (format nil "Revert ~A: ~A?" short-hash msg)
                                   :data (list :hash hash)
                                   :buttons '("Revert" "Cancel")))))))
+       nil)
+      ;; Amend commit - 'A' (capital, when on commits panel with HEAD selected)
+      ((and (key-event-char key) (char= (key-event-char key) #\A))
+       (when (= focused-idx 3)  ; Commits panel
+         (let ((selected (panel-selected panel)))
+           (when (= selected 0)  ; Only HEAD can be amended
+             (setf (active-dialog view)
+                   (make-dialog :title "Amend Commit"
+                                :message "Amend HEAD with staged changes?"
+                                :buttons '("Amend" "Amend with new message" "Cancel"))))))
+       nil)
+      ;; Reset to commit - 'X' (capital, when on commits panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\X))
+       (when (= focused-idx 3)  ; Commits panel
+         (let* ((commits (commit-list view))
+                (selected (panel-selected panel)))
+           (when (and commits (< selected (length commits)))
+             (let* ((commit (nth selected commits))
+                    (hash (log-entry-hash commit))
+                    (short-hash (log-entry-short-hash commit))
+                    (msg (log-entry-message commit)))
+               (setf (active-dialog view)
+                     (make-dialog :title "Reset to Commit"
+                                  :message (format nil "Reset to ~A: ~A?" short-hash msg)
+                                  :data (list :hash hash)
+                                  :buttons '("Soft" "Mixed" "Hard" "Cancel")))))))
+       nil)
+      ;; Fixup commit - 'F' (capital, when on commits panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\F))
+       (when (= focused-idx 3)  ; Commits panel
+         (let* ((commits (commit-list view))
+                (selected (panel-selected panel)))
+           (when (and commits (< selected (length commits)) (> selected 0))
+             (let* ((commit (nth selected commits))
+                    (hash (log-entry-hash commit))
+                    (short-hash (log-entry-short-hash commit)))
+               (setf (active-dialog view)
+                     (make-dialog :title "Fixup Commit"
+                                  :message (format nil "Create fixup! commit for ~A?" short-hash)
+                                  :data (list :hash hash)
+                                  :buttons '("Fixup" "Cancel")))))))
        nil)
       ;; Search commits - '/' (when on commits panel)
       ((and (key-event-char key) (char= (key-event-char key) #\/))

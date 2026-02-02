@@ -240,6 +240,14 @@
            #:git-stage-all
            #:git-discard-file
            #:git-amend
+           #:git-amend-message
+           #:git-reword-commit
+           #:git-reset-soft
+           #:git-reset-mixed
+           #:git-reset-hard
+           #:git-fixup-commit
+           #:git-commit-set-author
+           #:git-commit-add-coauthor
            #:git-create-branch
            #:git-push
            #:git-pull

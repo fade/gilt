@@ -497,8 +497,50 @@
   (git-run "commit" "-m" message))
 
 (defun git-amend ()
-  "Amend the last commit"
+  "Amend the last commit without changing message"
   (git-run "commit" "--amend" "--no-edit"))
+
+(defun git-amend-message (message)
+  "Amend the last commit with a new message"
+  (git-run "commit" "--amend" "-m" message))
+
+(defun git-reword-commit (hash message)
+  "Reword a commit message using interactive rebase.
+   Only works for commits that haven't been pushed."
+  ;; For HEAD, we can just amend
+  (let ((head (string-trim '(#\Newline #\Space) (git-run "rev-parse" "HEAD"))))
+    (if (string= hash head)
+        (git-amend-message message)
+        ;; For other commits, need interactive rebase - complex, skip for now
+        (error "Rewording non-HEAD commits requires interactive rebase"))))
+
+(defun git-reset-soft (ref)
+  "Soft reset to REF - keeps changes staged"
+  (git-run "reset" "--soft" ref))
+
+(defun git-reset-mixed (ref)
+  "Mixed reset to REF - keeps changes unstaged"
+  (git-run "reset" "--mixed" ref))
+
+(defun git-reset-hard (ref)
+  "Hard reset to REF - discards all changes"
+  (git-run "reset" "--hard" ref))
+
+(defun git-fixup-commit (hash)
+  "Create a fixup commit for the given commit hash"
+  (git-run "commit" "--fixup" hash))
+
+(defun git-commit-set-author (name email)
+  "Amend HEAD to change author"
+  (git-run "commit" "--amend" "--no-edit" 
+           (format nil "--author=~A <~A>" name email)))
+
+(defun git-commit-add-coauthor (name email)
+  "Add co-author trailer to HEAD commit"
+  (let* ((current-msg (string-trim '(#\Newline) (git-run "log" "-1" "--format=%B")))
+         (trailer (format nil "~%~%Co-authored-by: ~A <~A>" name email))
+         (new-msg (concatenate 'string current-msg trailer)))
+    (git-amend-message new-msg)))
 
 (defun git-squash-commits (count &optional message)
   "Squash the last COUNT commits into one. Uses soft reset + commit approach."
