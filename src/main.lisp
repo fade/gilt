@@ -161,11 +161,77 @@
 
 (defun main ()
   "Main entry point for executable"
-  (handler-case
-      (run)
-    (error (e)
-      ;; Restore terminal
-      (format t "~C[?25h~C[0m" (code-char 27) (code-char 27))
-      (sb-ext:run-program "/bin/stty" '("echo" "-raw" "icanon") :input t :output nil :error nil)
-      (format t "~%Error: ~A~%" e)))
-  (sb-ext:exit :code 0))
+  (let ((args (uiop:command-line-arguments)))
+    (cond
+      ;; Version flag
+      ((or (member "--version" args :test #'string=)
+           (member "-v" args :test #'string=))
+       (format t "gilt ~A~%" *version*)
+       (sb-ext:exit :code 0))
+      ;; Debug flag - run diagnostics
+      ((member "--debug" args :test #'string=)
+       (format t "~%=== Gilt Debug Mode ===~%~%")
+       (format t "SBCL: ~A~%" (lisp-implementation-version))
+       (format t "TERM: ~A~%" (sb-ext:posix-getenv "TERM"))
+       (format t "~%Checking /dev/tty...~%")
+       (handler-case
+           (let ((tty (open "/dev/tty" :direction :input :element-type '(unsigned-byte 8))))
+             (format t "  /dev/tty: OK~%")
+             (close tty))
+         (error (e)
+           (format t "  /dev/tty: FAILED - ~A~%" e)))
+       (format t "~%Checking stty...~%")
+       (handler-case
+           (let ((output (with-output-to-string (s)
+                           (sb-ext:run-program "/bin/stty" '("size")
+                                               :input t :output s :error nil))))
+             (format t "  stty size: ~A" output))
+         (error (e)
+           (format t "  stty: FAILED - ~A~%" e)))
+       (format t "~%Testing raw mode...~%")
+       (handler-case
+           (progn
+             (sb-ext:run-program "/bin/stty" '("-echo" "raw" "-icanon")
+                                 :input t :output nil :error nil)
+             (format t "  raw mode: OK~%")
+             (sb-ext:run-program "/bin/stty" '("echo" "-raw" "icanon")
+                                 :input t :output nil :error nil))
+         (error (e)
+           (format t "  raw mode: FAILED - ~A~%" e)))
+       (format t "~%Press any key within 3 seconds to test input...~%")
+       (finish-output)
+       (handler-case
+           (progn
+             (sb-ext:run-program "/bin/stty" '("-echo" "raw" "-icanon")
+                                 :input t :output nil :error nil)
+             (let* ((tty (open "/dev/tty" :direction :input :element-type '(unsigned-byte 8)))
+                    (start (get-internal-real-time))
+                    (timeout (* 3 internal-time-units-per-second))
+                    (got-input nil))
+               (loop while (< (- (get-internal-real-time) start) timeout)
+                     do (when (listen tty)
+                          (read-byte tty)
+                          (setf got-input t)
+                          (return)))
+               (close tty)
+               (sb-ext:run-program "/bin/stty" '("echo" "-raw" "icanon")
+                                   :input t :output nil :error nil)
+               (if got-input
+                   (format t "  input: OK~%")
+                   (format t "  input: TIMEOUT (no key pressed or input not working)~%"))))
+         (error (e)
+           (sb-ext:run-program "/bin/stty" '("echo" "-raw" "icanon")
+                               :input t :output nil :error nil)
+           (format t "  input: FAILED - ~A~%" e)))
+       (format t "~%=== Debug Complete ===~%")
+       (sb-ext:exit :code 0))
+      ;; Normal run
+      (t
+       (handler-case
+           (run)
+         (error (e)
+           ;; Restore terminal
+           (format t "~C[?25h~C[0m" (code-char 27) (code-char 27))
+           (sb-ext:run-program "/bin/stty" '("echo" "-raw" "icanon") :input t :output nil :error nil)
+           (format t "~%Error: ~A~%" e)))
+       (sb-ext:exit :code 0)))))
