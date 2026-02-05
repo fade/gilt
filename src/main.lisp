@@ -169,71 +169,78 @@
        (format t "gilt version ~A~%" *version*)
        (finish-output)
        (sb-ext:exit :code 0))
-      ;; Debug flag - run diagnostics
+      ;; Debug flag - run diagnostics using dynamic path detection
       ((member "--debug" args :test #'string=)
-       (format t "~%=== Gilt Debug Mode ===~%~%")
-       (format t "SBCL: ~A~%" (lisp-implementation-version))
-       (format t "TERM: ~A~%" (sb-ext:posix-getenv "TERM"))
-       (format t "~%Checking /dev/tty...~%")
-       (handler-case
-           (let ((tty (open "/dev/tty" :direction :input :element-type '(unsigned-byte 8))))
-             (format t "  /dev/tty: OK~%")
-             (close tty))
-         (error (e)
-           (format t "  /dev/tty: FAILED - ~A~%" e)))
-       (format t "~%Checking stty...~%")
-       (handler-case
-           (let ((output (with-output-to-string (s)
-                           (sb-ext:run-program "/bin/stty" '("size")
-                                               :input t :output s :error nil))))
-             (format t "  stty size: ~A" output))
-         (error (e)
-           (format t "  stty: FAILED - ~A~%" e)))
-       (format t "~%Testing raw mode...~%")
-       (handler-case
-           (progn
-             (sb-ext:run-program "/bin/stty" '("-echo" "raw" "-icanon")
-                                 :input t :output nil :error nil)
-             (format t "  raw mode: OK~%")
-             (sb-ext:run-program "/bin/stty" '("echo" "-raw" "icanon")
-                                 :input t :output nil :error nil))
-         (error (e)
-           (format t "  raw mode: FAILED - ~A~%" e)))
-       (format t "~%Press any key within 3 seconds to test input...~%")
-       (finish-output)
-       (handler-case
-           (progn
-             (sb-ext:run-program "/bin/stty" '("-echo" "raw" "-icanon")
-                                 :input t :output nil :error nil)
-             (let* ((tty (open "/dev/tty" :direction :input :element-type '(unsigned-byte 8)))
-                    (fd (sb-sys:fd-stream-fd tty))
-                    (start (get-internal-real-time))
-                    (timeout (* 3 internal-time-units-per-second))
-                    (got-input nil))
-               ;; Set non-blocking mode
-               (sb-posix:fcntl fd sb-posix:f-setfl 
-                               (logior (sb-posix:fcntl fd sb-posix:f-getfl)
-                                       sb-posix:o-nonblock))
-               (loop while (< (- (get-internal-real-time) start) timeout)
-                     do (handler-case
-                            (let ((byte (read-byte tty nil nil)))
-                              (when byte
-                                (setf got-input t)
-                                (return)))
-                          (sb-int:simple-stream-error () nil))
-                        (sleep 0.01))
-               (close tty)
-               (sb-ext:run-program "/bin/stty" '("echo" "-raw" "icanon")
+       (let ((stty-path (namestring gilt.terminal:*stty-path*))
+             (tty-path (namestring gilt.terminal:*tty-path*)))
+         (format t "~%=== Gilt Debug Mode ===~%~%")
+         (format t "SBCL: ~A~%" (lisp-implementation-version))
+         (format t "TERM: ~A~%" (sb-ext:posix-getenv "TERM"))
+         (format t "ALACRITTY_SOCKET: ~A~%" (or (sb-ext:posix-getenv "ALACRITTY_SOCKET") "(not set)"))
+         (format t "~%Detected paths:~%")
+         (format t "  stty: ~A~%" stty-path)
+         (format t "  tty:  ~A~%" tty-path)
+         (format t "  escape-timeout: ~A~%" gilt.terminal:*escape-timeout*)
+         (format t "~%Checking TTY access...~%")
+         (handler-case
+             (let ((tty (open tty-path :direction :input :element-type '(unsigned-byte 8))))
+               (format t "  ~A: OK~%" tty-path)
+               (close tty))
+           (error (e)
+             (format t "  ~A: FAILED - ~A~%" tty-path e)))
+         (format t "~%Checking stty...~%")
+         (handler-case
+             (let ((output (with-output-to-string (s)
+                             (sb-ext:run-program stty-path '("size")
+                                                 :input t :output s :error nil))))
+               (format t "  stty size: ~A" output))
+           (error (e)
+             (format t "  stty: FAILED - ~A~%" e)))
+         (format t "~%Testing raw mode...~%")
+         (handler-case
+             (progn
+               (sb-ext:run-program stty-path '("-echo" "raw" "-icanon")
                                    :input t :output nil :error nil)
-               (if got-input
-                   (format t "  input: OK~%")
-                   (format t "  input: TIMEOUT (no key pressed or input not working)~%"))))
-         (error (e)
-           (sb-ext:run-program "/bin/stty" '("echo" "-raw" "icanon")
-                               :input t :output nil :error nil)
-           (format t "  input: FAILED - ~A~%" e)))
-       (format t "~%=== Debug Complete ===~%")
-       (sb-ext:exit :code 0))
+               (format t "  raw mode: OK~%")
+               (sb-ext:run-program stty-path '("echo" "-raw" "icanon")
+                                   :input t :output nil :error nil))
+           (error (e)
+             (format t "  raw mode: FAILED - ~A~%" e)))
+         (format t "~%Press any key within 3 seconds to test input...~%")
+         (finish-output)
+         (handler-case
+             (progn
+               (sb-ext:run-program stty-path '("-echo" "raw" "-icanon")
+                                   :input t :output nil :error nil)
+               (let* ((tty (open tty-path :direction :input :element-type '(unsigned-byte 8)))
+                      (fd (sb-sys:fd-stream-fd tty))
+                      (start (get-internal-real-time))
+                      (timeout (* 3 internal-time-units-per-second))
+                      (got-input nil))
+                 ;; Set non-blocking mode
+                 (sb-posix:fcntl fd sb-posix:f-setfl 
+                                 (logior (sb-posix:fcntl fd sb-posix:f-getfl)
+                                         sb-posix:o-nonblock))
+                 (loop while (< (- (get-internal-real-time) start) timeout)
+                       do (handler-case
+                              (let ((byte (read-byte tty nil nil)))
+                                (when byte
+                                  (setf got-input t)
+                                  (return)))
+                            (sb-int:simple-stream-error () nil))
+                          (sleep 0.01))
+                 (close tty)
+                 (sb-ext:run-program stty-path '("echo" "-raw" "icanon")
+                                     :input t :output nil :error nil)
+                 (if got-input
+                     (format t "  input: OK~%")
+                     (format t "  input: TIMEOUT (no key pressed or input not working)~%"))))
+           (error (e)
+             (sb-ext:run-program stty-path '("echo" "-raw" "icanon")
+                                 :input t :output nil :error nil)
+             (format t "  input: FAILED - ~A~%" e)))
+         (format t "~%=== Debug Complete ===~%")
+         (sb-ext:exit :code 0)))
       ;; Normal run
       (t
        (handler-case
@@ -241,6 +248,7 @@
          (error (e)
            ;; Restore terminal
            (format t "~C[?25h~C[0m" (code-char 27) (code-char 27))
-           (sb-ext:run-program "/bin/stty" '("echo" "-raw" "icanon") :input t :output nil :error nil)
+           (sb-ext:run-program (namestring gilt.terminal:*stty-path*) 
+                               '("echo" "-raw" "icanon") :input t :output nil :error nil)
            (format t "~%Error: ~A~%" e)))
        (sb-ext:exit :code 0)))))

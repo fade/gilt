@@ -10,3 +10,4 @@ gilt
 # ASDF cache
 .cache/
 scripts/
+*.tar.gz
