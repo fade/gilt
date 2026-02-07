@@ -87,12 +87,8 @@
             #:disable-raw-mode
             #:query-size
             #:*terminal-mode*
-            ;; Cross-platform utility functions
-            #:find-stty
-            #:find-tty
-            #:detect-terminal-type
+            ;; Configuration
             #:wait-for-escape-sequence
-            #:*stty-path*
             #:*tty-path*
             #:*escape-timeout*
             ;; Input reader class

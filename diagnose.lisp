@@ -2,126 +2,127 @@
 ;;; Run with: sbcl --load diagnose.lisp
 ;;;
 ;;; This helps diagnose why gilt might freeze on startup
-;;; Cross-platform Unix support including NixOS
+;;; Uses direct termios FFI via sb-posix (no stty dependency)
+
+(require :sb-posix)
 
 (format t "~%=== Gilt Diagnostic Tool ===~%~%")
 
-;; Basic cross-platform functions for fallback mode
-(defun basic-find-stty ()
-  "Basic stty finder"
-  (or (ignore-errors (probe-file "/run/current-system/sw/bin/stty"))
-      (ignore-errors (probe-file "/bin/stty"))
-      (ignore-errors (probe-file "/usr/bin/stty"))
-      "/bin/stty"))
-
 (defun basic-find-tty ()
-  "Basic tty finder"
-  (or (ignore-errors (open "/dev/tty" :direction :input :if-does-not-exist nil))
-      (ignore-errors (open "/dev/pts/0" :direction :input :if-does-not-exist nil))
-      "/dev/tty"))
-
-;; Load gilt system and dependencies
-(handler-case
-    (progn
-      ;; Try to load the full system first
-      (load "gilt.asd")
-      (asdf:load-system :gilt))
-  (error (e)
-    (format t "Warning: Could not load full gilt system: ~A~%" e)
-    (format t "Falling back to basic diagnostic mode...~%~%")))
+  "Find available TTY device"
+  (let ((candidates '("/dev/tty" "/dev/pts/0" "/dev/console" "/dev/tty0")))
+    (loop for path in candidates
+          when (ignore-errors (open path :direction :input :if-does-not-exist nil))
+          return path
+          finally (return "/dev/tty"))))
 
 ;; Check 1: SBCL version
 (format t "1. SBCL Version: ~A~%" (lisp-implementation-version))
+(format t "   Terminal control: FFI (sb-posix termios)~%")
 
-;; Check 2: System detection
-(format t "~%2. System Detection:~%")
-(handler-case
-    (let ((stty-path (gilt.terminal:find-stty))
-          (tty-path (gilt.terminal:find-tty))
-          (terminal-props (gilt.terminal:detect-terminal-type)))
-      (format t "   stty path: ~A~%" stty-path)
-      (format t "   tty path: ~A~%" tty-path)
-      (format t "   terminal properties: ~A~%" terminal-props))
-  (error (e)
-    (format t "   Could not detect system (gilt not loaded): ~A~%" e)
-    ;; Fallback to basic detection
-    (let ((stty-path (basic-find-stty))
-          (tty-path (basic-find-tty)))
-      (format t "   Basic stty path: ~A~%" stty-path)
-      (format t "   Basic tty path: ~A~%" tty-path))))
-
-;; Check 3: TTY access
-(format t "~%3. Checking TTY access...~%")
-(handler-case
-    (let ((tty-path (basic-find-tty)))
+;; Check 2: TTY access
+(format t "~%2. Checking TTY access...~%")
+(let ((tty-path (basic-find-tty)))
+  (handler-case
       (let ((tty (open tty-path :direction :input :element-type '(unsigned-byte 8))))
         (format t "   OK: ~A opened successfully~%" tty-path)
-        (close tty)))
-  (error (e)
-    (format t "   ERROR: Cannot open TTY: ~A~%" e)
-    (format t "   This is likely the cause of the freeze!~%")))
+        (close tty))
+    (error (e)
+      (format t "   ERROR: Cannot open TTY (~A): ~A~%" tty-path e)
+      (format t "   This is likely the cause of the freeze!~%"))))
 
-;; Check 4: stty command
-(format t "~%4. Checking stty command...~%")
+;; Check 3: Terminal size via ioctl
+(format t "~%3. Checking terminal size (ioctl TIOCGWINSZ)...~%")
 (handler-case
-    (let ((stty-path (basic-find-stty)))
-      (let ((output (with-output-to-string (s)
-                      (sb-ext:run-program stty-path '("size")
-                                          :input t
-                                          :output s
-                                          :error nil))))
-        (format t "   Terminal size: ~A" output)))
+    (sb-alien:with-alien ((buf (sb-alien:array (sb-alien:unsigned 8) 8)))
+      (sb-alien:alien-funcall
+       (sb-alien:extern-alien "ioctl"
+                              (function sb-alien:int sb-alien:int
+                                        sb-alien:unsigned-long (* t)))
+       (sb-sys:fd-stream-fd sb-sys:*stdin*)
+       #x5413
+       (sb-alien:addr (sb-alien:deref buf 0)))
+      (let ((rows (logior (sb-alien:deref buf 0) (ash (sb-alien:deref buf 1) 8)))
+            (cols (logior (sb-alien:deref buf 2) (ash (sb-alien:deref buf 3) 8))))
+        (format t "   Terminal size: ~Dx~D~%" cols rows)))
   (error (e)
-    (format t "   ERROR: stty failed: ~A~%" e)))
+    (format t "   ERROR: ioctl failed: ~A~%" e)))
 
-;; Check 5: Raw mode test
-(format t "~%5. Testing raw mode (will restore after)...~%")
-(handler-case
-    (let ((stty-path (basic-find-stty)))
-      (sb-ext:run-program stty-path '("-echo" "raw" "-icanon")
-                          :input t :output nil :error nil)
-      (format t "   Raw mode enabled OK~%")
-      (sb-ext:run-program stty-path '("echo" "-raw" "icanon")
-                          :input t :output nil :error nil)
-      (format t "   Raw mode disabled OK~%"))
-  (error (e)
-    (format t "   ERROR: Raw mode test failed: ~A~%" e)))
+;; Check 4: Raw mode test via termios
+(format t "~%4. Testing raw mode (termios FFI)...~%")
+(let ((orig nil))
+  (handler-case
+      (let* ((fd (sb-sys:fd-stream-fd sb-sys:*stdin*))
+             (saved (sb-posix:tcgetattr fd))
+             (raw (sb-posix:tcgetattr fd)))
+        (setf orig saved)
+        (setf (sb-posix:termios-lflag raw)
+              (logand (sb-posix:termios-lflag raw)
+                      (lognot (logior sb-posix:echo sb-posix:icanon))))
+        (sb-posix:tcsetattr fd sb-posix:tcsaflush raw)
+        (format t "   Raw mode enabled OK~%")
+        (sb-posix:tcsetattr fd sb-posix:tcsaflush saved)
+        (format t "   Raw mode disabled OK~%"))
+    (error (e)
+      (when orig
+        (ignore-errors
+          (sb-posix:tcsetattr (sb-sys:fd-stream-fd sb-sys:*stdin*)
+                              sb-posix:tcsaflush orig)))
+      (format t "   ERROR: Raw mode test failed: ~A~%" e))))
 
-;; Check 6: Environment
-(format t "~%6. Environment:~%")
+;; Check 5: Environment
+(format t "~%5. Environment:~%")
 (format t "   TERM=~A~%" (sb-ext:posix-getenv "TERM"))
 (format t "   SHELL=~A~%" (sb-ext:posix-getenv "SHELL"))
 (format t "   DISPLAY=~A~%" (or (sb-ext:posix-getenv "DISPLAY") "(not set)"))
 (format t "   ALACRITTY_SOCKET=~A~%" (or (sb-ext:posix-getenv "ALACRITTY_SOCKET") "(not set)"))
 
-;; Check 7: Quick input test
-(format t "~%7. Input test (press any key within 3 seconds)...~%")
+;; Check 6: Quick input test
+(format t "~%6. Input test (press any key within 3 seconds)...~%")
 (finish-output)
-(handler-case
-    (let ((stty-path (basic-find-stty))
-          (tty-path (basic-find-tty)))
-      (sb-ext:run-program stty-path '("-echo" "raw" "-icanon")
-                          :input t :output nil :error nil)
-      (let* ((tty (open tty-path :direction :input :element-type '(unsigned-byte 8)))
-             (start (get-internal-real-time))
-             (timeout (* 3 internal-time-units-per-second))
-             (got-input nil))
-        (loop while (< (- (get-internal-real-time) start) timeout)
-               do (when (listen tty)
-                    (read-byte tty)
-                    (setf got-input t)
-                    (return)))
-        (close tty)
-        (sb-ext:run-program stty-path '("echo" "-raw" "icanon")
-                            :input t :output nil :error nil)
-        (if got-input
-            (format t "   OK: Received keyboard input~%")
-            (format t "   WARNING: No input received (timeout). This may indicate input issues.~%"))))
-  (error (e)
-    (let ((stty-path (basic-find-stty)))
-      (sb-ext:run-program stty-path '("echo" "-raw" "icanon")
-                          :input t :output nil :error nil))
-    (format t "   ERROR: Input test failed: ~A~%" e)))
+(let ((orig nil))
+  (handler-case
+      (let* ((fd (sb-sys:fd-stream-fd sb-sys:*stdin*))
+             (saved (sb-posix:tcgetattr fd))
+             (raw (sb-posix:tcgetattr fd))
+             (tty-path (basic-find-tty)))
+        (setf orig saved)
+        ;; Enable raw mode
+        (setf (sb-posix:termios-lflag raw)
+              (logand (sb-posix:termios-lflag raw)
+                      (lognot (logior sb-posix:echo sb-posix:icanon))))
+        (let ((cc (sb-posix:termios-cc raw)))
+          (setf (aref cc sb-posix:vmin) 1)
+          (setf (aref cc sb-posix:vtime) 0))
+        (sb-posix:tcsetattr fd sb-posix:tcsaflush raw)
+        ;; Open TTY for input
+        (let* ((tty (open tty-path :direction :input :element-type '(unsigned-byte 8)))
+               (tty-fd (sb-sys:fd-stream-fd tty))
+               (start (get-internal-real-time))
+               (timeout (* 3 internal-time-units-per-second))
+               (got-input nil))
+          (sb-posix:fcntl tty-fd sb-posix:f-setfl
+                          (logior (sb-posix:fcntl tty-fd sb-posix:f-getfl)
+                                  sb-posix:o-nonblock))
+          (loop while (< (- (get-internal-real-time) start) timeout)
+                do (handler-case
+                       (let ((byte (read-byte tty nil nil)))
+                         (when byte
+                           (setf got-input t)
+                           (return)))
+                     (sb-int:simple-stream-error () nil))
+                   (sleep 0.01))
+          (close tty)
+          (sb-posix:tcsetattr fd sb-posix:tcsaflush saved)
+          (if got-input
+              (format t "   OK: Received keyboard input~%")
+              (format t "   WARNING: No input received (timeout). This may indicate input issues.~%"))))
+    (error (e)
+      (when orig
+        (ignore-errors
+          (sb-posix:tcsetattr (sb-sys:fd-stream-fd sb-sys:*stdin*)
+                              sb-posix:tcsaflush orig)))
+      (format t "   ERROR: Input test failed: ~A~%" e))))
 
 (format t "~%=== Diagnostic Complete ===~%")
 (format t "~%If you see errors above, please report them.~%")

@@ -44,13 +44,7 @@
 
 ;;; Environment configuration (must be defined before methods that use them)
 
-(defparameter *stty-path* 
-  (or (sb-ext:posix-getenv "GILT_STTY_PATH") 
-      (ignore-errors (probe-file "/run/current-system/sw/bin/stty"))
-      (ignore-errors (probe-file "/bin/stty"))
-      (ignore-errors (probe-file "/usr/bin/stty"))
-      (ignore-errors (probe-file "/usr/local/bin/stty"))
-      "/bin/stty"))
+(require :sb-posix)
 
 (defparameter *tty-path*
   (or (sb-ext:posix-getenv "GILT_TTY_PATH")
@@ -92,91 +86,63 @@
 (defmethod enable-raw-mode ((mode terminal-mode))
   (unless (terminal-raw-p mode)
     (handler-case
-        (sb-ext:run-program *stty-path* '("-echo" "raw" "-icanon")
-                            :input t
-                            :output nil
-                            :error nil)
+        (let* ((fd (sb-sys:fd-stream-fd sb-sys:*stdin*))
+               (orig (sb-posix:tcgetattr fd))
+               (raw (sb-posix:tcgetattr fd)))
+          ;; Save original for restore
+          (setf (terminal-original-settings mode) orig)
+          ;; Modify flags for raw mode
+          (setf (sb-posix:termios-iflag raw)
+                (logand (sb-posix:termios-iflag raw)
+                        (lognot (logior sb-posix:brkint sb-posix:icrnl
+                                       sb-posix:inpck sb-posix:istrip sb-posix:ixon))))
+          (setf (sb-posix:termios-oflag raw)
+                (logand (sb-posix:termios-oflag raw)
+                        (lognot sb-posix:opost)))
+          (setf (sb-posix:termios-cflag raw)
+                (logior (sb-posix:termios-cflag raw) sb-posix:cs8))
+          (setf (sb-posix:termios-lflag raw)
+                (logand (sb-posix:termios-lflag raw)
+                        (lognot (logior sb-posix:echo sb-posix:icanon
+                                       sb-posix:iexten sb-posix:isig))))
+          ;; VMIN=1 VTIME=0
+          (let ((cc (sb-posix:termios-cc raw)))
+            (setf (aref cc sb-posix:vmin) 1)
+            (setf (aref cc sb-posix:vtime) 0))
+          (sb-posix:tcsetattr fd sb-posix:tcsaflush raw))
       (error (e)
-        ;; Fallback: try to use shell built-in stty
-        (handler-case
-            (sb-ext:run-program "sh" (list "-c" "stty -echo raw -icanon")
-                                :input t :output nil :error nil)
-          (error (e2)
-            (warn "Failed to enable raw mode with ~A: ~A" *stty-path* e)
-            (warn "Fallback with shell stty also failed: ~A" e2)))))
+        (warn "Failed to enable raw mode: ~A" e)))
     (setf (terminal-raw-p mode) t)))
 
 (defmethod disable-raw-mode ((mode terminal-mode))
   (when (terminal-raw-p mode)
     (handler-case
-        (sb-ext:run-program *stty-path* '("echo" "-raw" "icanon")
-                            :input t
-                            :output nil
-                            :error nil)
+        (let ((saved (terminal-original-settings mode)))
+          (when saved
+            (sb-posix:tcsetattr (sb-sys:fd-stream-fd sb-sys:*stdin*)
+                                sb-posix:tcsaflush saved)))
       (error (e)
-        ;; Fallback: try to use shell built-in stty
-        (handler-case
-            (sb-ext:run-program "sh" (list "-c" "stty echo -raw icanon")
-                                :input t :output nil :error nil)
-          (error (e2)
-            (declare (ignore e2))
-            (warn "Failed to disable raw mode with ~A: ~A" *stty-path* e)))))
+        (warn "Failed to disable raw mode: ~A" e)))
     (setf (terminal-raw-p mode) nil)))
 
 (defmethod query-size ((mode terminal-mode))
   (declare (ignore mode))
   (handler-case
-      (let* ((size-str (with-output-to-string (s)
-                         (sb-ext:run-program *stty-path* '("size")
-                                             :input t
-                                             :output s
-                                             :error nil)))
-             (parts (cl-ppcre:split "\\s+" (string-trim '(#\Newline #\Space) size-str))))
-        (when (= (length parts) 2)
-          (list (parse-integer (second parts))   ; width (cols)
-                (parse-integer (first parts))))); height (rows)
+      (sb-alien:with-alien ((buf (sb-alien:array (sb-alien:unsigned 8) 8)))
+        (sb-alien:alien-funcall
+         (sb-alien:extern-alien "ioctl"
+                                (function sb-alien:int sb-alien:int
+                                          sb-alien:unsigned-long (* t)))
+         (sb-sys:fd-stream-fd sb-sys:*stdin*)
+         #x5413
+         (sb-alien:addr (sb-alien:deref buf 0)))
+        (let ((rows (logior (sb-alien:deref buf 0) (ash (sb-alien:deref buf 1) 8)))
+              (cols (logior (sb-alien:deref buf 2) (ash (sb-alien:deref buf 3) 8))))
+          (when (and (> rows 0) (> cols 0))
+            (list cols rows))))
     (error (e)
-      (warn "Failed to query terminal size with ~A: ~A" *stty-path* e)
-      ;; Return default size
+      (warn "Failed to query terminal size: ~A" e)
       '(80 24))))
-
-;;; Cross-platform utility functions
-
-(defun find-stty ()
-  "Find stty command across different Unix systems"
-  (or
-   ;; Check common NixOS locations first
-   (ignore-errors (probe-file "/run/current-system/sw/bin/stty"))
-   ;; Check standard locations
-   (ignore-errors (probe-file "/bin/stty"))
-   (ignore-errors (probe-file "/usr/bin/stty"))
-   (ignore-errors (probe-file "/usr/local/bin/stty"))
-   ;; Fallback to PATH search
-   (handler-case
-       (let ((result (sb-ext:run-program "which" '("stty") :output :string)))
-         (when (and result (> (length result) 0))
-           (string-trim '(#\Newline #\Space) result)))
-     (error nil))
-   ;; Final fallback
-   "/bin/stty"))
-
-(defun find-tty ()
-  "Find available TTY device across different systems"
-  (let ((candidates '("/dev/tty" "/dev/pts/0" "/dev/console" "/dev/tty0")))
-    (loop for path in candidates
-          when (ignore-errors (open path :direction :input :if-does-not-exist nil))
-          return path
-          finally (return "/dev/tty"))))
-
-(defun detect-terminal-type ()
-  "Detect terminal emulator and return optimization settings"
-  (let ((term (sb-ext:posix-getenv "TERM"))
-        (alacritty-socket (sb-ext:posix-getenv "ALACRITTY_SOCKET")))
-    (cond
-      (alacritty-socket '(:escape-timeout 0.01 :fast-input t))
-      ((and term (search "alacritty" term)) '(:escape-timeout 0.01 :fast-input t))
-      ((and term (search "xterm" term)) '(:escape-timeout 0.02 :fast-input nil))
-      (t '(:escape-timeout 0.02 :fast-input nil)))))
 
 ;;; Global terminal mode instance
 
