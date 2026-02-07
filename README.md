@@ -75,8 +75,6 @@ See **[GUIDE.md](GUIDE.md)** for the complete user guide including:
 
 See **[CHANGELOG.md](CHANGELOG.md)** for version history.
 
-See **[NIXOS_SUPPORT.md](NIXOS_SUPPORT.md)** for cross-platform Unix support and troubleshooting.
-
 ## Architecture
 
 | File | Description |

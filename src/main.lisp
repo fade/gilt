@@ -8,7 +8,7 @@
 ;;; - MAJOR: incompatible API changes
 ;;; - MINOR: new functionality (backwards compatible)
 ;;; - PATCH: bug fixes (backwards compatible)
-(defparameter *version* "0.12.0"
+(defparameter *version* "0.13.0"
   "Gilt version number")
 
 ;;; Application class - encapsulates all application state

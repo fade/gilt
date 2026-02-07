@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-02-07
+
+### Changed
+
+- **Terminal control via FFI** — Replaced all `stty` subprocess calls with direct POSIX termios FFI
+  - Uses `sb-posix:tcgetattr`/`tcsetattr` for raw mode control
+  - Uses `sb-alien` ioctl with `TIOCGWINSZ` for terminal size queries
+  - Eliminates `stty` dependency entirely (fixes NixOS, containers, non-standard paths)
+  - Faster startup and keypress handling (no subprocess forks)
+- `--debug` mode now tests termios FFI directly instead of stty
+- `diagnose.lisp` rewritten to use FFI-based diagnostics
+
+### Removed
+
+- `*stty-path*` parameter and `GILT_STTY_PATH` environment variable (no longer needed)
+- `find-stty`, `find-tty`, `detect-terminal-type` utility functions (replaced by FFI)
+- `NIXOS_SUPPORT.md` — no longer needed since stty dependency is eliminated
+
 ## [0.12.0] - 2026-02-04
 
 ### Added
@@ -116,7 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Branch tracking info (ahead/behind upstream)
   - Repository state indicator (MERGING, REBASING, etc.)
 
-[Unreleased]: https://github.com/parenworks/gilt/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/parenworks/gilt/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/parenworks/gilt/releases/tag/v0.13.0
 [0.12.0]: https://github.com/parenworks/gilt/releases/tag/v0.12.0
 [0.11.0]: https://github.com/parenworks/gilt/releases/tag/v0.11.0
 [0.10.0]: https://github.com/parenworks/gilt/releases/tag/v0.10.0
