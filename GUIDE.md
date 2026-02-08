@@ -109,7 +109,7 @@ Each commit line shows:
 | `C` (capital) | Commit with `$EDITOR` (suspends TUI) |
 | `w` | Cycle: Files → Worktrees → Stashes |
 | `W` (capital) | Commit without pre-commit hook |
-| `P` (capital) | Push to remote |
+| `P` (capital) | Push to remote (with Force Push option) |
 | `p` (lowercase) | Pull from remote |
 
 ### Worktrees View (in Files Panel)

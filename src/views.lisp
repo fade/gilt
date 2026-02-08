@@ -1102,23 +1102,32 @@
                   (refresh-data view))))
              ;; Push dialog - start async runner
              ((string= (dialog-title dlg) "Push")
-              ;; Check if branch has upstream, if not use --set-upstream
-              (let* ((has-upstream (git-branch-has-upstream-p))
+              (let* ((buttons (dialog-buttons dlg))
+                     (selected-button (nth (dialog-selected-button dlg) buttons))
+                     (force-p (string= selected-button "Force Push"))
+                     (has-upstream (git-branch-has-upstream-p))
                      (branch (git-current-branch))
-                     (push-cmd (if has-upstream
-                                   '("git" "push")
-                                   (list "git" "push" "--set-upstream" "origin" branch))))
-                (log-command view (if has-upstream
-                                      "git push"
-                                      (format nil "git push --set-upstream origin ~A" branch)))
+                     (push-cmd (cond
+                                 ((and force-p has-upstream)
+                                  '("git" "push" "--force-with-lease"))
+                                 (force-p
+                                  (list "git" "push" "--force-with-lease"
+                                        "--set-upstream" "origin" branch))
+                                 (has-upstream
+                                  '("git" "push"))
+                                 (t
+                                  (list "git" "push" "--set-upstream" "origin" branch)))))
+                (log-command view (format nil "~{~A~^ ~}" push-cmd))
                 (setf (active-runner view) (make-process-runner))
-                (setf (runner-title view) "Pushing...")
+                (setf (runner-title view) (if force-p "Force Pushing..." "Pushing..."))
                 (runner-start (active-runner view) push-cmd)
                 (setf (panel-title (main-panel view)) "[0] Push Output")
-                (setf (panel-items (main-panel view)) 
-                      (list (if has-upstream
-                                "Starting git push..."
-                                (format nil "Setting upstream and pushing ~A..." branch))))))
+                (setf (panel-items (main-panel view))
+                      (list (cond
+                              (force-p "Starting git push --force-with-lease...")
+                              ((not has-upstream)
+                               (format nil "Setting upstream and pushing ~A..." branch))
+                              (t "Starting git push..."))))))
              ;; Pull dialog - start async runner
              ((string= (dialog-title dlg) "Pull")
               (log-command view "git pull")
@@ -2182,7 +2191,7 @@
        (setf (active-dialog view)
              (make-dialog :title "Push"
                           :message "Push to origin?"
-                          :buttons '("Push" "Cancel")))
+                          :buttons '("Push" "Force Push" "Cancel")))
        nil)
       ;; Pull - 'p' (lowercase) opens pull confirmation (not in stashes view)
       ((and (key-event-char key) (char= (key-event-char key) #\p)
