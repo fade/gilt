@@ -462,9 +462,17 @@
 
 ;;; Branches
 
-(defun git-branches ()
-  "Get list of branch names"
-  (let ((lines (git-run-lines "branch" "--format=%(refname:short)")))
+(defun git-branches (&optional (sort-mode :name))
+  "Get list of branch names, sorted by SORT-MODE (:name, :date, :recent)"
+  (let ((lines (case sort-mode
+                 (:date
+                  (git-run-lines "branch" "--sort=creatordate"
+                                 "--format=%(refname:short)"))
+                 (:recent
+                  (git-run-lines "branch" "--sort=-committerdate"
+                                 "--format=%(refname:short)"))
+                 (t
+                  (git-run-lines "branch" "--format=%(refname:short)")))))
     lines))
 
 (defun git-current-branch ()
@@ -822,6 +830,34 @@
 (defun git-merge-squash (branch)
   "Squash merge a branch into current (stages changes, does not commit)."
   (git-run "merge" "--squash" branch))
+
+(defun git-bisect-start ()
+  "Start a bisect session."
+  (git-run "bisect" "start"))
+
+(defun git-bisect-bad (&optional commit)
+  "Mark a commit as bad during bisect. Returns bisect output."
+  (if commit
+      (git-run "bisect" "bad" commit)
+      (git-run "bisect" "bad")))
+
+(defun git-bisect-good (&optional commit)
+  "Mark a commit as good during bisect. Returns bisect output."
+  (if commit
+      (git-run "bisect" "good" commit)
+      (git-run "bisect" "good")))
+
+(defun git-bisect-skip ()
+  "Skip the current commit during bisect."
+  (git-run "bisect" "skip"))
+
+(defun git-bisect-reset ()
+  "End the bisect session and return to original HEAD."
+  (git-run "bisect" "reset"))
+
+(defun git-bisect-log ()
+  "Get the bisect log showing steps taken so far."
+  (git-run "bisect" "log"))
 
 (defun git-resolve-with-ours (file)
   "Resolve conflict by keeping our version"

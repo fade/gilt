@@ -105,9 +105,9 @@
 - [x] **Diff context size** — increase/decrease lines of context in diff view
 - [x] **Whitespace toggle** — toggle whitespace visibility in diffs
 - [x] **Squash merge** — option for squash merge in merge dialog
-- [ ] **Sort branches** — sort branches by name, date, etc.
-- [ ] **Bisect** — interactive git bisect from commits panel
-- [ ] **Search / filter** — search and filter within all panels
+- [x] **Sort branches** — sort branches by name, date, etc.
+- [x] **Bisect** — interactive git bisect from commits panel
+- [x] **Search / filter** — search and filter within all panels
 
 ### Lower Priority
 

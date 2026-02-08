@@ -265,6 +265,12 @@
            #:git-set-upstream
            #:git-unset-upstream
            #:git-merge-squash
+           #:git-bisect-start
+           #:git-bisect-bad
+           #:git-bisect-good
+           #:git-bisect-skip
+           #:git-bisect-reset
+           #:git-bisect-log
            #:git-push
            #:git-pull
            #:git-push-interactive

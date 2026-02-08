@@ -115,7 +115,14 @@
    (rebase-base-commit :accessor rebase-base-commit :initform nil)
    ;; Diff display options
    (diff-context-size :accessor diff-context-size :initform 3)
-   (diff-ignore-whitespace :accessor diff-ignore-whitespace :initform nil)))
+   (diff-ignore-whitespace :accessor diff-ignore-whitespace :initform nil)
+   ;; Branch sort mode
+   (branch-sort-mode :accessor branch-sort-mode :initform :name)
+   ;; Bisect mode
+   (bisect-mode :accessor bisect-mode :initform nil)
+   ;; Panel filter
+   (filter-query :accessor filter-query :initform nil)
+   (filter-panel :accessor filter-panel :initform nil)))
 
 (defmethod initialize-instance :after ((view main-view) &key)
   ;; Create all panels
@@ -245,13 +252,21 @@
                  (list (list :colored :bright-black "  No worktrees")))))
       ;; Files view (default)
       (t
-       (setf (panel-title (files-panel view))
-             (numbered-title 2 "Files" '("Worktrees" "Stashes")))
-       (setf (panel-items (files-panel view))
-             (loop for e in entries
-                   collect (format-status-entry e))))))
+       (let ((filtered-entries (if (and (filter-query view) (eql (filter-panel view) 1))
+                                   (remove-if-not
+                                    (lambda (e) (search (filter-query view)
+                                                        (string-downcase (status-entry-file e))))
+                                    entries)
+                                   entries)))
+         (setf (panel-title (files-panel view))
+               (if (and (filter-query view) (eql (filter-panel view) 1))
+                   (format nil "[2] Files (filter: ~A)" (filter-query view))
+                   (numbered-title 2 "Files" '("Worktrees" "Stashes"))))
+         (setf (panel-items (files-panel view))
+               (loop for e in filtered-entries
+                     collect (format-status-entry e)))))))
   ;; Branches panel - local, remote, tags, or submodules based on toggle
-  (let ((branches (git-branches))
+  (let ((branches (git-branches (branch-sort-mode view)))
         (remote-branches (git-remote-branches))
         (tags (git-tags))
         (submodules (git-submodules)))
@@ -306,13 +321,20 @@
              (loop for b in remote-branches
                    collect (list :colored :bright-cyan (format nil "  ~A" b)))))
       (t
-       (setf (panel-title (branches-panel view))
-             (numbered-title 3 "Local" '("Remotes" "Tags" "Submodules")))
-       (setf (panel-items (branches-panel view))
-             (loop for b in branches
-                   collect (if (string= b (current-branch view))
-                               (list :colored :bright-green (format nil "* ~A" b))
-                               (format nil "  ~A" b)))))))
+       (let ((filtered-branches (if (and (filter-query view) (eql (filter-panel view) 2))
+                                    (remove-if-not
+                                     (lambda (b) (search (filter-query view) (string-downcase b)))
+                                     branches)
+                                    branches)))
+         (setf (panel-title (branches-panel view))
+               (if (and (filter-query view) (eql (filter-panel view) 2))
+                   (format nil "[3] Local (filter: ~A)" (filter-query view))
+                   (numbered-title 3 "Local" '("Remotes" "Tags" "Submodules"))))
+         (setf (panel-items (branches-panel view))
+               (loop for b in filtered-branches
+                     collect (if (string= b (current-branch view))
+                                 (list :colored :bright-green (format nil "* ~A" b))
+                                 (format nil "  ~A" b))))))))
   ;; Commits panel - show hash (yellow), author initials, circle, and message
   (let ((commits (git-log :count 50)))
     (setf (commit-list view) commits)
@@ -519,9 +541,9 @@
        ("c" . "commit") ("C" . "commit+editor") ("w" . "commit-no-hook") ("r" . "refresh") ("q" . "quit")))
     (2 ; Branches panel
      '(("j/k" . "navigate") ("Enter" . "checkout/track") ("n" . "new") ("N" . "rename")
-       ("w" . "local/remote") ("M" . "merge") ("R" . "rebase") ("F" . "ff") ("D" . "delete") ("r" . "refresh") ("q" . "quit")))
+       ("w" . "local/remote") ("M" . "merge") ("R" . "rebase") ("F" . "ff") ("s" . "sort") ("D" . "delete") ("r" . "refresh") ("q" . "quit")))
     (3 ; Commits panel
-     '(("j/k" . "navigate") ("i" . "rebase") ("S" . "squash") ("C" . "cherry-pick") ("R" . "revert") ("r" . "refresh") ("q" . "quit")))
+     '(("j/k" . "navigate") ("i" . "rebase") ("b" . "bisect") ("S" . "squash") ("C" . "cherry-pick") ("R" . "revert") ("r" . "refresh") ("q" . "quit")))
     (4 ; Stash panel
      '(("j/k" . "navigate") ("s" . "stash") ("g" . "pop") ("r" . "refresh") ("q" . "quit")))
     (t ; Default
@@ -669,6 +691,7 @@
                        "   C          Cherry-pick commit"
                        "   R          Revert commit"
                        "   i          Interactive rebase (select range)"
+                       "   b          Bisect (start, then b:bad g:good Q:reset)"
                        ""
                        " BRANCHES (panel 3)"
                        "   n          New branch"
@@ -678,6 +701,7 @@
                        "   R          Rebase current onto branch"
                        "   F          Fast-forward branch to upstream"
                        "   u          Set/unset upstream tracking branch"
+                       "   s          Sort branches (name/date/recent)"
                        "   D          Delete branch/tag/remote branch"
                        "   C          Cherry-pick from branch"
                        "   w          Cycle: Local/Remotes/Tags/Submodules"
@@ -703,6 +727,10 @@
                        "   Enter      Apply stash"
                        "   B          New branch from stash (in Stashes view)"
                        "   R          Rename stash (in Stashes view)"
+                       ""
+                       " SEARCH / FILTER"
+                       "   /          Search commits (panel 4) or filter (panels 2,3,5)"
+                       "              Filter shows only matching items in panel"
                        ""
                        " DIFF OPTIONS"
                        "   }          Increase diff context lines"
@@ -1273,6 +1301,66 @@
                 (when (string= selected-button "Pop")
                   (log-command view (format nil "git stash pop stash@{~D}" idx))
                   (git-stash-pop idx)
+                  (refresh-data view))))
+             ;; Filter Files dialog
+             ((string= (dialog-title dlg) "Filter Files")
+              (let* ((buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (cond
+                  ((string= selected-button "Filter")
+                   (let ((query (first (dialog-input-lines dlg))))
+                     (when (and query (> (length query) 0))
+                       (setf (filter-query view) (string-downcase query))
+                       (setf (filter-panel view) 1)
+                       (refresh-data view))))
+                  ((string= selected-button "Clear")
+                   (setf (filter-query view) nil)
+                   (setf (filter-panel view) nil)
+                   (refresh-data view)))))
+             ;; Filter Branches dialog
+             ((string= (dialog-title dlg) "Filter Branches")
+              (let* ((buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (cond
+                  ((string= selected-button "Filter")
+                   (let ((query (first (dialog-input-lines dlg))))
+                     (when (and query (> (length query) 0))
+                       (setf (filter-query view) (string-downcase query))
+                       (setf (filter-panel view) 2)
+                       (refresh-data view))))
+                  ((string= selected-button "Clear")
+                   (setf (filter-query view) nil)
+                   (setf (filter-panel view) nil)
+                   (refresh-data view)))))
+             ;; Filter Stashes dialog
+             ((string= (dialog-title dlg) "Filter Stashes")
+              (let* ((buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (cond
+                  ((string= selected-button "Filter")
+                   (let ((query (first (dialog-input-lines dlg))))
+                     (when (and query (> (length query) 0))
+                       (setf (filter-query view) (string-downcase query))
+                       (setf (filter-panel view) 4)
+                       (refresh-data view))))
+                  ((string= selected-button "Clear")
+                   (setf (filter-query view) nil)
+                   (setf (filter-panel view) nil)
+                   (refresh-data view)))))
+             ;; Bisect dialog
+             ((string= (dialog-title dlg) "Bisect")
+              (let ((commit-hash (getf (dialog-data dlg) :commit-hash)))
+                (when commit-hash
+                  (log-command view "git bisect start")
+                  (git-bisect-start)
+                  (log-command view (format nil "git bisect bad ~A" (subseq commit-hash 0 (min 7 (length commit-hash)))))
+                  (git-bisect-bad commit-hash)
+                  (setf (bisect-mode view) t)
+                  (setf (panel-title (commits-panel view))
+                        "[4] BISECT  b:bad g:good Q:reset")
                   (refresh-data view))))
              ;; Checkout Tag dialog
              ((string= (dialog-title dlg) "Checkout Tag")
@@ -1997,6 +2085,22 @@
                                   :data (list :stash-index (stash-index st))
                                   :buttons '("Rename" "Cancel")))))))
        nil)
+      ;; Sort branches - 's' (when on branches panel, local view)
+      ((and (key-event-char key) (char= (key-event-char key) #\s))
+       (when (and (= focused-idx 2) (not (show-remote-branches view))
+                  (not (show-tags view)) (not (show-submodules view)))
+         (setf (branch-sort-mode view)
+               (case (branch-sort-mode view)
+                 (:name :date)
+                 (:date :recent)
+                 (:recent :name)))
+         (log-command view (format nil "Sort: ~A"
+                                    (case (branch-sort-mode view)
+                                      (:name "alphabetical")
+                                      (:date "creation date")
+                                      (:recent "most recent"))))
+         (refresh-data view))
+       nil)
       ;; Set upstream - 'u' (when on branches panel, local view)
       ((and (key-event-char key) (char= (key-event-char key) #\u))
        (when (and (= focused-idx 2) (not (show-remote-branches view))
@@ -2513,13 +2617,80 @@
                  (setf (panel-selected (commits-panel view)) 0)
                  (update-rebase-display view))))))
        nil)
-      ;; Search commits - '/' (when on commits panel)
+      ;; Search/filter - '/' (context-sensitive)
       ((and (key-event-char key) (char= (key-event-char key) #\/))
+       (cond
+         ;; Commits panel - search commits (existing behavior)
+         ((= focused-idx 3)
+          (setf (active-dialog view)
+                (make-dialog :title "Search Commits"
+                             :input-mode t
+                             :buttons '("Search" "Cancel"))))
+         ;; Files panel - filter files
+         ((= focused-idx 1)
+          (setf (active-dialog view)
+                (make-dialog :title "Filter Files"
+                             :input-mode t
+                             :buttons '("Filter" "Clear" "Cancel"))))
+         ;; Branches panel - filter branches
+         ((= focused-idx 2)
+          (setf (active-dialog view)
+                (make-dialog :title "Filter Branches"
+                             :input-mode t
+                             :buttons '("Filter" "Clear" "Cancel"))))
+         ;; Stash panel - filter stashes
+         ((= focused-idx 4)
+          (setf (active-dialog view)
+                (make-dialog :title "Filter Stashes"
+                             :input-mode t
+                             :buttons '("Filter" "Clear" "Cancel")))))
+       nil)
+      ;; Bisect - 'b' (when on commits panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\b))
        (when (= focused-idx 3)  ; Commits panel
-         (setf (active-dialog view)
-               (make-dialog :title "Search Commits"
-                            :input-mode t
-                            :buttons '("Search" "Cancel"))))
+         (if (bisect-mode view)
+             ;; During bisect: mark current HEAD as bad
+             (let ((result (git-bisect-bad)))
+               (log-command view "git bisect bad")
+               (log-command view result)
+               (refresh-data view)
+               (when (search "is the first bad commit" result)
+                 (setf (bisect-mode view) nil)
+                 (log-command view "Bisect complete! Found the bad commit.")))
+             ;; Start bisect: open options dialog
+             (let* ((commits (commit-list view))
+                    (selected (panel-selected panel)))
+               (when (and commits (< selected (length commits)))
+                 (let ((commit (nth selected commits)))
+                   (setf (active-dialog view)
+                         (make-dialog :title "Bisect"
+                                      :message (format nil "Start bisect with ~A as bad commit?"
+                                                       (log-entry-short-hash commit))
+                                      :data (list :commit-hash (log-entry-hash commit))
+                                      :buttons '("Start (bad)" "Cancel"))))))))
+       nil)
+      ;; Bisect good - 'g' (when on commits panel in bisect mode)
+      ((and (key-event-char key) (char= (key-event-char key) #\g))
+       (when (and (= focused-idx 3) (bisect-mode view))
+         (let ((result (git-bisect-good)))
+           (log-command view "git bisect good")
+           (log-command view result)
+           (refresh-data view)
+           (when (search "is the first bad commit" result)
+             (setf (bisect-mode view) nil)
+             (log-command view "Bisect complete! Found the bad commit."))))
+       nil)
+      ;; Bisect skip - 'S' (capital, when on commits panel in bisect mode)
+      ;; Note: 'S' is squash on commits panel normally, but in bisect mode it becomes skip
+      ;; Bisect reset - 'Q' (capital, when in bisect mode on commits panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\Q))
+       (when (and (= focused-idx 3) (bisect-mode view))
+         (log-command view "git bisect reset")
+         (git-bisect-reset)
+         (setf (bisect-mode view) nil)
+         (setf (panel-title (commits-panel view))
+               (numbered-title 4 "Commits" '("Reflog")))
+         (refresh-data view))
        nil)
       ;; Blame view - 'b' (when on files panel)
       ((and (key-event-char key) (char= (key-event-char key) #\b))

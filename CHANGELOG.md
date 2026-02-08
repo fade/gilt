@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Diff context size** — Press `{`/`}` to decrease/increase diff context lines
 - **Whitespace toggle** — Press `W` to toggle whitespace visibility in diffs
 - **Squash merge** — Merge dialog now offers Merge or Squash options
+- **Sort branches** — Press `s` on branches panel to cycle sort: name/date/recent
+- **Bisect** — Press `b` on commits panel to start bisect, then `b`:bad `g`:good `Q`:reset
+- **Search / filter** — Press `/` on files, branches, or stash panels to filter items
 - **ROADMAP.md** — Feature roadmap tracking implemented and planned features
 
 ### Fixed

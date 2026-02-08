@@ -78,6 +78,7 @@ Each commit line shows:
 | `1-5` | Jump directly to panel by number |
 | `r` | Refresh all data |
 | `q` | Quit Gilt |
+| `/` | Search commits or filter files/branches/stashes |
 | `z` | Undo last git command (via reflog) |
 | `Z` | Redo last undone command |
 
@@ -144,6 +145,7 @@ Press `w` in the Files panel to cycle to Stashes view.
 | `N` (capital) | Rename selected branch |
 | `F` (capital) | Fast-forward branch to match upstream |
 | `u` | Set/unset upstream tracking branch |
+| `s` | Sort branches (name/date/recent) |
 | `D` (capital) | Delete selected branch |
 | `C` (capital) | Cherry-pick commits from selected branch |
 
@@ -192,6 +194,7 @@ Press `w` three times from Local branches to reach Submodules view.
 | `C` (capital) | Cherry-pick selected commit |
 | `R` (capital) | Revert selected commit |
 | `i` | Interactive rebase (select range, then mark actions) |
+| `b` | Start bisect (then `b`:bad `g`:good `Q`:reset) |
 
 ### Stash Panel `[5]`
 
