@@ -127,6 +127,7 @@ Press `w` in the Files panel to cycle to Stashes view.
 | `Enter` | Apply selected stash (keep stash) |
 | `p` or `P` | Pop selected stash (apply and remove) |
 | `B` (capital) | Create new branch from stash |
+| `R` (capital) | Rename stash |
 | `D` (capital) | Drop selected stash |
 | `0` | Focus main panel to scroll stash diff with j/k |
 
@@ -142,6 +143,7 @@ Press `w` in the Files panel to cycle to Stashes view.
 | `R` (capital) | Rebase current branch onto selected branch |
 | `N` (capital) | Rename selected branch |
 | `F` (capital) | Fast-forward branch to match upstream |
+| `u` | Set/unset upstream tracking branch |
 | `D` (capital) | Delete selected branch |
 | `C` (capital) | Cherry-pick commits from selected branch |
 
@@ -164,6 +166,7 @@ Press `w` twice from Local branches to reach Tags view.
 |-----|--------|
 | `t` | Create tag on HEAD |
 | `T` (capital) | Push tag to remote |
+| `Space` | Checkout tag as detached HEAD |
 | `D` (capital) | Delete selected tag |
 | `w` | Cycle to Submodules view |
 

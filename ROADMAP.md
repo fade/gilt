@@ -99,12 +99,12 @@
 
 ### Medium Priority
 
-- [ ] **Checkout tag** — checkout a tag as detached HEAD
-- [ ] **Rename stash** — rename a stash entry
-- [ ] **Set upstream** — set/unset tracking branch for local branch
-- [ ] **Diff context size** — increase/decrease lines of context in diff view
-- [ ] **Whitespace toggle** — toggle whitespace visibility in diffs
-- [ ] **Squash merge** — option for squash merge in merge dialog
+- [x] **Checkout tag** — checkout a tag as detached HEAD
+- [x] **Rename stash** — rename a stash entry
+- [x] **Set upstream** — set/unset tracking branch for local branch
+- [x] **Diff context size** — increase/decrease lines of context in diff view
+- [x] **Whitespace toggle** — toggle whitespace visibility in diffs
+- [x] **Squash merge** — option for squash merge in merge dialog
 - [ ] **Sort branches** — sort branches by name, date, etc.
 - [ ] **Bisect** — interactive git bisect from commits panel
 - [ ] **Search / filter** — search and filter within all panels

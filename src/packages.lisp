@@ -260,6 +260,11 @@
            #:git-commit-no-verify
            #:git-undo
            #:git-redo
+           #:git-checkout-tag
+           #:git-rename-stash
+           #:git-set-upstream
+           #:git-unset-upstream
+           #:git-merge-squash
            #:git-push
            #:git-pull
            #:git-push-interactive

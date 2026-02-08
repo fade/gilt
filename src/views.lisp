@@ -112,7 +112,10 @@
    ;; Interactive rebase mode
    (rebase-mode :accessor rebase-mode :initform nil)
    (rebase-entries :accessor rebase-entries :initform nil)
-   (rebase-base-commit :accessor rebase-base-commit :initform nil)))
+   (rebase-base-commit :accessor rebase-base-commit :initform nil)
+   ;; Diff display options
+   (diff-context-size :accessor diff-context-size :initform 3)
+   (diff-ignore-whitespace :accessor diff-ignore-whitespace :initform nil)))
 
 (defmethod initialize-instance :after ((view main-view) &key)
   ;; Create all panels
@@ -474,8 +477,12 @@
               (let* ((entry (nth selected entries))
                      (file (status-entry-file entry))
                      (diff (if (status-entry-staged-p entry)
-                               (git-diff-staged file)
-                               (git-diff file))))
+                               (git-diff-staged file
+                                                :context-size (diff-context-size view)
+                                                :ignore-whitespace (diff-ignore-whitespace view))
+                               (git-diff file
+                                         :context-size (diff-context-size view)
+                                         :ignore-whitespace (diff-ignore-whitespace view)))))
                 (setf (panel-title (main-panel view)) "[0] Diff")
                 (setf (panel-items (main-panel view))
                       (format-diff-lines diff))))))))
@@ -670,11 +677,13 @@
                        "   M          Merge branch into current"
                        "   R          Rebase current onto branch"
                        "   F          Fast-forward branch to upstream"
+                       "   u          Set/unset upstream tracking branch"
                        "   D          Delete branch/tag/remote branch"
                        "   C          Cherry-pick from branch"
                        "   w          Cycle: Local/Remotes/Tags/Submodules"
                        "   t          Create tag (in Tags view)"
                        "   T          Push tag to remote (in Tags view)"
+                       "   Space      Checkout tag (detached HEAD, in Tags view)"
                        "   f          Fetch (select remote)"
                        "   A          Add remote (in Remotes view)"
                        "   R          Rename remote (in Remotes view)"
@@ -693,6 +702,12 @@
                        "   g          Pop stash"
                        "   Enter      Apply stash"
                        "   B          New branch from stash (in Stashes view)"
+                       "   R          Rename stash (in Stashes view)"
+                       ""
+                       " DIFF OPTIONS"
+                       "   }          Increase diff context lines"
+                       "   {          Decrease diff context lines"
+                       "   W          Toggle whitespace in diffs"
                        ""
                        " UNDO/REDO"
                        "   z          Undo last git command (via reflog)"
@@ -925,11 +940,20 @@
              ((string= (dialog-title dlg) "Merge Branch")
               (let* ((msg (dialog-message dlg))
                      (parts (cl-ppcre:split "\\|" msg))
-                     (branch (first parts)))
+                     (branch (first parts))
+                     (buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
                 (when branch
-                  (log-command view (format nil "git merge ~A" branch))
-                  (git-merge branch)
-                  (refresh-data view))))
+                  (cond
+                    ((string= selected-button "Merge")
+                     (log-command view (format nil "git merge ~A" branch))
+                     (git-merge branch)
+                     (refresh-data view))
+                    ((string= selected-button "Squash")
+                     (log-command view (format nil "git merge --squash ~A" branch))
+                     (git-merge-squash branch)
+                     (refresh-data view))))))
              ;; Delete Branch dialog
              ((string= (dialog-title dlg) "Delete Branch")
               (let* ((msg (dialog-message dlg))
@@ -1249,6 +1273,38 @@
                 (when (string= selected-button "Pop")
                   (log-command view (format nil "git stash pop stash@{~D}" idx))
                   (git-stash-pop idx)
+                  (refresh-data view))))
+             ;; Checkout Tag dialog
+             ((string= (dialog-title dlg) "Checkout Tag")
+              (let ((tag-name (getf (dialog-data dlg) :tag-name)))
+                (when tag-name
+                  (log-command view (format nil "git checkout ~A" tag-name))
+                  (git-checkout-tag tag-name)
+                  (refresh-data view))))
+             ;; Set Upstream dialog
+             ((string= (dialog-title dlg) "Set Upstream")
+              (let* ((branch (getf (dialog-data dlg) :branch))
+                     (buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (cond
+                  ((string= selected-button "Set")
+                   (let ((remote-branch (first (dialog-input-lines dlg))))
+                     (when (and remote-branch (> (length remote-branch) 0))
+                       (log-command view (format nil "git branch --set-upstream-to=~A ~A" remote-branch branch))
+                       (git-set-upstream branch remote-branch)
+                       (refresh-data view))))
+                  ((string= selected-button "Unset")
+                   (log-command view (format nil "git branch --unset-upstream ~A" branch))
+                   (git-unset-upstream branch)
+                   (refresh-data view)))))
+             ;; Rename Stash dialog
+             ((string= (dialog-title dlg) "Rename Stash")
+              (let ((new-msg (first (dialog-input-lines dlg)))
+                    (idx (getf (dialog-data dlg) :stash-index)))
+                (when (and new-msg (> (length new-msg) 0))
+                  (log-command view (format nil "git stash rename stash@{~D} \"~A\"" idx new-msg))
+                  (git-rename-stash idx new-msg)
                   (refresh-data view))))
              ;; Rename Branch dialog
              ((string= (dialog-title dlg) "Rename Branch")
@@ -1725,21 +1781,34 @@
              ;; Focus main panel
              (setf (panel-focused (main-panel view)) t)))
        nil)
-      ;; Stage/unstage with space (when on files panel)
+      ;; Stage/unstage with space (when on files panel) or checkout tag (tags view)
       ((and (key-event-char key) (char= (key-event-char key) #\Space))
-       (when (= focused-idx 1)  ; Files panel
-         (let* ((entries (status-entries view))
-                (selected (panel-selected panel)))
-           (when (and entries (< selected (length entries)))
-             (let ((entry (nth selected entries)))
-               (if (status-entry-staged-p entry)
-                   (progn
-                     (log-command view (format nil "git reset HEAD -- ~A" (status-entry-file entry)))
-                     (git-unstage-file (status-entry-file entry)))
-                   (progn
-                     (log-command view (format nil "git add -- ~A" (status-entry-file entry)))
-                     (git-stage-file (status-entry-file entry))))
-               (refresh-data view)))))
+       (cond
+         ;; Files panel - stage/unstage
+         ((= focused-idx 1)
+          (let* ((entries (status-entries view))
+                 (selected (panel-selected panel)))
+            (when (and entries (< selected (length entries)))
+              (let ((entry (nth selected entries)))
+                (if (status-entry-staged-p entry)
+                    (progn
+                      (log-command view (format nil "git reset HEAD -- ~A" (status-entry-file entry)))
+                      (git-unstage-file (status-entry-file entry)))
+                    (progn
+                      (log-command view (format nil "git add -- ~A" (status-entry-file entry)))
+                      (git-stage-file (status-entry-file entry))))
+                (refresh-data view)))))
+         ;; Tags view - checkout tag as detached HEAD
+         ((and (= focused-idx 2) (show-tags view))
+          (let* ((tags (tag-list view))
+                 (selected (panel-selected panel)))
+            (when (and tags (< selected (length tags)))
+              (let ((tag (nth selected tags)))
+                (setf (active-dialog view)
+                      (make-dialog :title "Checkout Tag"
+                                   :message (format nil "Checkout tag '~A' as detached HEAD?" (tag-name tag))
+                                   :data (list :tag-name (tag-name tag))
+                                   :buttons '("Checkout" "Cancel"))))))))
        nil)
       ;; Enter on branches - checkout local or track remote
       ;; Enter on stashes view - apply stash
@@ -1895,6 +1964,56 @@
                (git-stage-all))))
        (refresh-data view)
        nil)
+      ;; Diff context size - '{' decrease, '}' increase (global)
+      ((and (key-event-char key) (char= (key-event-char key) #\}))
+       (incf (diff-context-size view))
+       (log-command view (format nil "Diff context: ~D lines" (diff-context-size view)))
+       (update-main-content view)
+       nil)
+      ((and (key-event-char key) (char= (key-event-char key) #\{))
+       (when (> (diff-context-size view) 0)
+         (decf (diff-context-size view)))
+       (log-command view (format nil "Diff context: ~D lines" (diff-context-size view)))
+       (update-main-content view)
+       nil)
+      ;; Whitespace toggle - 'W' (capital, global)
+      ((and (key-event-char key) (char= (key-event-char key) #\W))
+       (setf (diff-ignore-whitespace view) (not (diff-ignore-whitespace view)))
+       (log-command view (format nil "Whitespace: ~A"
+                                  (if (diff-ignore-whitespace view) "ignored" "shown")))
+       (update-main-content view)
+       nil)
+      ;; Rename stash - 'R' (capital, when on files panel in stashes view)
+      ((and (key-event-char key) (char= (key-event-char key) #\R))
+       (when (and (= focused-idx 1) (show-stashes view))
+         (let* ((stashes (stash-list view))
+                (selected (panel-selected panel)))
+           (when (and stashes (< selected (length stashes)))
+             (let ((st (nth selected stashes)))
+               (setf (active-dialog view)
+                     (make-dialog :title "Rename Stash"
+                                  :message (format nil "Rename stash@{~D}:" (stash-index st))
+                                  :input-mode t
+                                  :data (list :stash-index (stash-index st))
+                                  :buttons '("Rename" "Cancel")))))))
+       nil)
+      ;; Set upstream - 'u' (when on branches panel, local view)
+      ((and (key-event-char key) (char= (key-event-char key) #\u))
+       (when (and (= focused-idx 2) (not (show-remote-branches view))
+                  (not (show-tags view)) (not (show-submodules view)))
+         (let* ((branches (branch-list view))
+                (selected (panel-selected panel)))
+           (when (and branches (< selected (length branches)))
+             (let ((branch (nth selected branches)))
+               (setf (active-dialog view)
+                     (make-dialog :title "Set Upstream"
+                                  :message (format nil "Set upstream for '~A' to (e.g. origin/~A):" branch branch)
+                                  :input-mode t
+                                  :data (list :branch branch)
+                                  :buttons '("Set" "Unset" "Cancel")))))))
+       nil)
+      ;; Rename stash - 'r' (when on files panel in stashes view)
+      ;; Note: 'r' is refresh globally, but in stashes view it becomes rename
       ;; Stash - 's' (when on stash panel or files panel)
       ((and (key-event-char key) (char= (key-event-char key) #\s))
        (when (or (= focused-idx 4) (= focused-idx 1))  ; Stash or Files panel
@@ -2167,7 +2286,8 @@
                        (make-dialog :title "Merge Branch"
                                     :message (format nil "Merge ~A into ~A?" 
                                                      branch (current-branch view))
-                                    :buttons '("Merge" "Cancel")))
+                                    :data (list :branch branch)
+                                    :buttons '("Merge" "Squash" "Cancel")))
                  ;; Store branch name for later use
                  (setf (dialog-message (active-dialog view))
                        (format nil "~A|~A" branch (current-branch view))))))))

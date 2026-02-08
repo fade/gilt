@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Commit with editor** — Press `C` on files panel to open `$EDITOR` for commit message
 - **Commit without hook** — Press `w` on files panel to commit bypassing pre-commit hooks
 - **Undo/redo** — Press `z` to undo last git command, `Z` to redo (uses reflog)
+- **Checkout tag** — Press `Space` in tags view to checkout tag as detached HEAD
+- **Rename stash** — Press `R` in stashes view to rename a stash entry
+- **Set upstream** — Press `u` on branches panel to set/unset upstream tracking
+- **Diff context size** — Press `{`/`}` to decrease/increase diff context lines
+- **Whitespace toggle** — Press `W` to toggle whitespace visibility in diffs
+- **Squash merge** — Merge dialog now offers Merge or Squash options
 - **ROADMAP.md** — Feature roadmap tracking implemented and planned features
 
 ### Fixed

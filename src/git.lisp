@@ -174,17 +174,23 @@
 
 ;;; Diff
 
-(defun git-diff (&optional file)
+(defun git-diff (&optional file &key (context-size 3) ignore-whitespace)
   "Get unstaged diff, optionally for specific file"
-  (if file
-      (git-run "diff" "--color=always" "--" file)
-      (git-run "diff" "--color=always")))
+  (let ((args (list "diff" "--color=always"
+                    (format nil "-U~D" context-size))))
+    (when ignore-whitespace (push "-w" (cdr (last args))))
+    (if file
+        (apply #'git-run (append args (list "--" file)))
+        (apply #'git-run args))))
 
-(defun git-diff-staged (&optional file)
+(defun git-diff-staged (&optional file &key (context-size 3) ignore-whitespace)
   "Get staged diff, optionally for specific file"
-  (if file
-      (git-run "diff" "--cached" "--color=always" "--" file)
-      (git-run "diff" "--cached" "--color=always")))
+  (let ((args (list "diff" "--cached" "--color=always"
+                    (format nil "-U~D" context-size))))
+    (when ignore-whitespace (push "-w" (cdr (last args))))
+    (if file
+        (apply #'git-run (append args (list "--" file)))
+        (apply #'git-run args))))
 
 ;;; Hunk class for partial staging
 
@@ -792,6 +798,30 @@
                       (newer-msg (subseq newer-line (1+ newer-space))))
                  (git-run "reset" "--hard" newer-hash)
                  (return newer-msg)))))
+
+(defun git-checkout-tag (tag-name)
+  "Checkout a tag as detached HEAD."
+  (git-run "checkout" tag-name))
+
+(defun git-rename-stash (index new-message)
+  "Rename a stash entry. Gets the SHA, drops, then re-stores with new message."
+  (let* ((stash-ref (format nil "stash@{~D}" index))
+         (sha (string-trim '(#\Newline #\Space)
+                           (git-run "rev-parse" stash-ref))))
+    (git-run "stash" "drop" stash-ref)
+    (git-run "stash" "store" "-m" new-message sha)))
+
+(defun git-set-upstream (branch remote-branch)
+  "Set the upstream tracking branch for a local branch."
+  (git-run "branch" (format nil "--set-upstream-to=~A" remote-branch) branch))
+
+(defun git-unset-upstream (branch)
+  "Remove the upstream tracking branch for a local branch."
+  (git-run "branch" "--unset-upstream" branch))
+
+(defun git-merge-squash (branch)
+  "Squash merge a branch into current (stages changes, does not commit)."
+  (git-run "merge" "--squash" branch))
 
 (defun git-resolve-with-ours (file)
   "Resolve conflict by keeping our version"
