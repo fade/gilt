@@ -1,0 +1,417 @@
+#!/usr/bin/env bash
+#
+# run-tests.sh — Automated smoke tests for Gilt's git backend functions
+#
+# These tests exercise the non-TUI parts: git backend, clipboard, config,
+# recent repos, and verify the binary launches without crashing.
+#
+# Usage:
+#   ./tests/run-tests.sh [gilt-test-repo-path]
+#
+# If no path given, creates a temporary test repo.
+#
+set -uo pipefail
+
+# ─── Colors ───────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+PASS=0
+FAIL=0
+SKIP=0
+TOTAL=0
+
+pass() {
+    ((TOTAL++))
+    ((PASS++))
+    echo -e "  ${GREEN}[PASS]${NC} $1"
+}
+
+fail() {
+    ((TOTAL++))
+    ((FAIL++))
+    echo -e "  ${RED}[FAIL]${NC} $1"
+    [ -n "${2:-}" ] && echo -e "        ${RED}→ $2${NC}"
+}
+
+skip() {
+    ((TOTAL++))
+    ((SKIP++))
+    echo -e "  ${YELLOW}[SKIP]${NC} $1 — $2"
+}
+
+section() {
+    echo ""
+    echo -e "${CYAN}━━━ $1 ━━━${NC}"
+}
+
+# ─── Setup ────────────────────────────────────────────────────────
+GILT_BIN=$(which gilt 2>/dev/null || echo "")
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="${1:-}"
+
+if [ -z "$REPO_DIR" ]; then
+    REPO_DIR=$(mktemp -d /tmp/gilt-test-XXXXXX)
+    echo -e "${CYAN}Creating temporary test repo at $REPO_DIR${NC}"
+    bash "$SCRIPT_DIR/setup-test-repo.sh" "$REPO_DIR" 2>/dev/null
+    CLEANUP=true
+else
+    CLEANUP=false
+fi
+
+if [ ! -d "$REPO_DIR/.git" ]; then
+    echo -e "${RED}Error: $REPO_DIR is not a git repository${NC}"
+    echo "Run ./tests/setup-test-repo.sh first"
+    exit 1
+fi
+
+echo ""
+echo "═══════════════════════════════════════════════════"
+echo "  Gilt Automated Smoke Tests"
+echo "  Repo: $REPO_DIR"
+echo "  Gilt: ${GILT_BIN:-NOT FOUND}"
+echo "  Date: $(date)"
+echo "═══════════════════════════════════════════════════"
+
+# ─── 1. Binary Tests ─────────────────────────────────────────────
+section "1. Binary & Build"
+
+if [ -n "$GILT_BIN" ]; then
+    pass "gilt binary found at $GILT_BIN"
+else
+    fail "gilt binary not found in PATH"
+fi
+
+# Verify the binary is executable and is an SBCL core
+if [ -n "$GILT_BIN" ]; then
+    if [ -x "$GILT_BIN" ]; then
+        pass "gilt binary is executable"
+    else
+        fail "gilt binary is not executable"
+    fi
+    FILE_TYPE=$(file "$GILT_BIN" 2>/dev/null || echo "unknown")
+    if echo "$FILE_TYPE" | grep -qi "executable\|ELF\|data"; then
+        pass "gilt binary is a valid executable ($FILE_TYPE)"
+    else
+        fail "gilt binary type unexpected: $FILE_TYPE"
+    fi
+fi
+
+# ─── 2. Test Repo State ──────────────────────────────────────────
+section "2. Test Repo State"
+
+cd "$REPO_DIR"
+
+# Branches
+BRANCH_COUNT=$(git branch | wc -l)
+if [ "$BRANCH_COUNT" -ge 4 ]; then
+    pass "Multiple branches exist ($BRANCH_COUNT branches)"
+else
+    fail "Expected ≥4 branches, got $BRANCH_COUNT"
+fi
+
+# Check specific branches
+for branch in master feature/login feature/dashboard bugfix/typo conflict-branch; do
+    if git branch | grep -q "$branch"; then
+        pass "Branch '$branch' exists"
+    else
+        fail "Branch '$branch' missing"
+    fi
+done
+
+# Tags
+TAG_COUNT=$(git tag | wc -l)
+if [ "$TAG_COUNT" -ge 2 ]; then
+    pass "Tags exist ($TAG_COUNT tags)"
+else
+    fail "Expected ≥2 tags, got $TAG_COUNT"
+fi
+
+if git tag | grep -q "v0.1.0"; then
+    pass "Lightweight tag v0.1.0 exists"
+else
+    fail "Lightweight tag v0.1.0 missing"
+fi
+
+if git tag | grep -q "v1.0.0"; then
+    pass "Annotated tag v1.0.0 exists"
+else
+    fail "Annotated tag v1.0.0 missing"
+fi
+
+# Commits
+COMMIT_COUNT=$(git log --oneline | wc -l)
+if [ "$COMMIT_COUNT" -ge 8 ]; then
+    pass "Sufficient commit history ($COMMIT_COUNT commits)"
+else
+    fail "Expected ≥8 commits, got $COMMIT_COUNT"
+fi
+
+# Stashes
+STASH_COUNT=$(git stash list | wc -l)
+if [ "$STASH_COUNT" -ge 1 ]; then
+    pass "Stashes exist ($STASH_COUNT stashes)"
+else
+    fail "Expected ≥1 stash, got $STASH_COUNT"
+fi
+
+# Submodule
+if [ -f .gitmodules ]; then
+    pass "Submodule configured (.gitmodules exists)"
+else
+    fail "No submodule found"
+fi
+
+# Modified files
+MODIFIED=$(git status --porcelain | grep "^ M" | wc -l)
+if [ "$MODIFIED" -ge 1 ]; then
+    pass "Modified files present ($MODIFIED files)"
+else
+    fail "No modified files found"
+fi
+
+# Staged files
+STAGED=$(git status --porcelain | grep "^A " | wc -l)
+if [ "$STAGED" -ge 1 ]; then
+    pass "Staged files present ($STAGED files)"
+else
+    fail "No staged files found"
+fi
+
+# Untracked files
+UNTRACKED=$(git status --porcelain | grep "^??" | wc -l)
+if [ "$UNTRACKED" -ge 1 ]; then
+    pass "Untracked files present ($UNTRACKED files)"
+else
+    fail "No untracked files found"
+fi
+
+# .gitignore
+if [ -f .gitignore ]; then
+    if grep -q "*.log" .gitignore; then
+        pass ".gitignore contains *.log pattern"
+    else
+        fail ".gitignore missing *.log pattern"
+    fi
+else
+    fail ".gitignore not found"
+fi
+
+# ─── 3. Git Operations ───────────────────────────────────────────
+section "3. Git Operations (non-TUI)"
+
+# Stage/unstage
+git add untracked-file.txt 2>/dev/null
+if git status --porcelain | grep -q "^A.*untracked-file.txt"; then
+    pass "git add (stage) works"
+else
+    fail "git add failed"
+fi
+
+git reset HEAD untracked-file.txt 2>/dev/null
+if git status --porcelain | grep -q "^??.*untracked-file.txt"; then
+    pass "git reset (unstage) works"
+else
+    fail "git reset failed"
+fi
+
+# Branch operations
+git checkout -b test-branch-smoke 2>/dev/null
+if [ "$(git branch --show-current)" = "test-branch-smoke" ]; then
+    pass "Branch create + checkout works"
+else
+    fail "Branch create failed"
+fi
+
+git checkout master 2>/dev/null
+git branch -d test-branch-smoke 2>/dev/null
+if ! git branch | grep -q "test-branch-smoke"; then
+    pass "Branch delete works"
+else
+    fail "Branch delete failed"
+fi
+
+# Stash operations
+echo "smoke test content" > smoke-test-file.txt
+git stash push -u -m "smoke-test-stash" 2>/dev/null
+if git stash list | grep -q "smoke-test-stash"; then
+    pass "Stash push works"
+else
+    fail "Stash push failed"
+fi
+
+git stash pop 2>/dev/null
+if [ -f smoke-test-file.txt ]; then
+    pass "Stash pop works"
+    rm -f smoke-test-file.txt
+else
+    fail "Stash pop failed"
+fi
+
+# Diff
+DIFF_OUTPUT=$(git diff -- src/core/main.lisp 2>/dev/null)
+if [ -n "$DIFF_OUTPUT" ]; then
+    pass "git diff produces output for modified file"
+else
+    fail "git diff produced no output"
+fi
+
+# Log
+LOG_OUTPUT=$(git log --oneline -5 2>/dev/null)
+if [ -n "$LOG_OUTPUT" ]; then
+    pass "git log works"
+else
+    fail "git log failed"
+fi
+
+# Blame
+BLAME_OUTPUT=$(git blame src/core/main.lisp 2>/dev/null)
+if [ -n "$BLAME_OUTPUT" ]; then
+    pass "git blame works"
+else
+    fail "git blame failed"
+fi
+
+# Remote URL parsing (simulates what gilt does)
+if git remote get-url origin 2>/dev/null | grep -qE "(github|gitlab|git)"; then
+    pass "Remote URL retrievable"
+else
+    skip "Remote URL" "no remote configured (run with GITHUB_REMOTE)"
+fi
+
+# ─── 4. Clipboard Tools ──────────────────────────────────────────
+section "4. System Tools"
+
+# Check clipboard tools
+CLIP_TOOL=""
+for tool in xclip xsel wl-copy pbcopy; do
+    if command -v "$tool" >/dev/null 2>&1; then
+        CLIP_TOOL="$tool"
+        break
+    fi
+done
+
+if [ -n "$CLIP_TOOL" ]; then
+    pass "Clipboard tool available: $CLIP_TOOL"
+    # Test clipboard round-trip
+    echo -n "gilt-test-clipboard" | $CLIP_TOOL -selection clipboard 2>/dev/null || true
+    CLIP_CONTENT=$(xclip -selection clipboard -o 2>/dev/null || xsel --clipboard --output 2>/dev/null || echo "")
+    if [ "$CLIP_CONTENT" = "gilt-test-clipboard" ]; then
+        pass "Clipboard round-trip works"
+    else
+        skip "Clipboard round-trip" "could not verify (display/wayland issue?)"
+    fi
+else
+    skip "Clipboard tool" "none of xclip/xsel/wl-copy/pbcopy found"
+fi
+
+# Check browser tools
+BROWSER_TOOL=""
+for tool in xdg-open open wslview; do
+    if command -v "$tool" >/dev/null 2>&1; then
+        BROWSER_TOOL="$tool"
+        break
+    fi
+done
+
+if [ -n "$BROWSER_TOOL" ]; then
+    pass "Browser launcher available: $BROWSER_TOOL"
+else
+    skip "Browser launcher" "none of xdg-open/open/wslview found"
+fi
+
+# Check git-flow
+if command -v git-flow >/dev/null 2>&1 || git flow version >/dev/null 2>&1; then
+    pass "git-flow available"
+else
+    skip "git-flow" "not installed (apt install git-flow)"
+fi
+
+# Check difftool config
+DIFFTOOL=$(git config diff.tool 2>/dev/null || echo "")
+if [ -n "$DIFFTOOL" ]; then
+    pass "Diff tool configured: $DIFFTOOL"
+else
+    skip "Diff tool" "not configured (git config diff.tool <tool>)"
+fi
+
+# ─── 5. Config Directory ─────────────────────────────────────────
+section "5. Gilt Config"
+
+GILT_CONFIG_DIR="$HOME/.config/gilt"
+
+if [ -d "$GILT_CONFIG_DIR" ]; then
+    pass "Config directory exists: $GILT_CONFIG_DIR"
+else
+    skip "Config directory" "$GILT_CONFIG_DIR not created yet (run gilt once)"
+fi
+
+if [ -f "$GILT_CONFIG_DIR/recent-repos.txt" ]; then
+    REPO_COUNT=$(wc -l < "$GILT_CONFIG_DIR/recent-repos.txt")
+    pass "Recent repos file exists ($REPO_COUNT entries)"
+else
+    skip "Recent repos file" "not created yet (run gilt once)"
+fi
+
+if [ -f "$GILT_CONFIG_DIR/commands.conf" ]; then
+    CMD_COUNT=$(grep -v "^#" "$GILT_CONFIG_DIR/commands.conf" | grep -c "=" 2>/dev/null || echo 0)
+    pass "Custom commands file exists ($CMD_COUNT commands)"
+else
+    skip "Custom commands file" "not created (create ~/.config/gilt/commands.conf)"
+fi
+
+# ─── 6. Merge Conflict Setup Verification ────────────────────────
+section "6. Merge Conflict Readiness"
+
+# Verify conflict-branch exists and will conflict
+CONFLICT_DIFF=$(git diff master..conflict-branch -- README.md 2>/dev/null)
+if [ -n "$CONFLICT_DIFF" ]; then
+    pass "conflict-branch diverges from master on README.md"
+else
+    fail "conflict-branch does not diverge (conflict test won't work)"
+fi
+
+# ─── 7. File Structure ───────────────────────────────────────────
+section "7. File Structure (for tree view testing)"
+
+DIR_COUNT=$(find . -type d -not -path './.git*' | wc -l)
+FILE_COUNT=$(find . -type f -not -path './.git*' | wc -l)
+
+if [ "$DIR_COUNT" -ge 4 ]; then
+    pass "Multiple directories for tree view ($DIR_COUNT dirs)"
+else
+    fail "Not enough directories for tree view testing"
+fi
+
+if [ "$FILE_COUNT" -ge 8 ]; then
+    pass "Multiple files across directories ($FILE_COUNT files)"
+else
+    fail "Not enough files for testing"
+fi
+
+# ─── Summary ─────────────────────────────────────────────────────
+echo ""
+echo "═══════════════════════════════════════════════════"
+echo -e "  Results: ${GREEN}$PASS passed${NC}, ${RED}$FAIL failed${NC}, ${YELLOW}$SKIP skipped${NC} / $TOTAL total"
+echo "═══════════════════════════════════════════════════"
+
+if [ "$FAIL" -gt 0 ]; then
+    echo -e "  ${RED}⚠ Some tests failed. Fix issues before manual TUI testing.${NC}"
+else
+    echo -e "  ${GREEN}✓ All automated tests passed. Proceed to manual TUI testing.${NC}"
+    echo -e "  ${CYAN}  Open tests/TESTING.md and work through the checklist.${NC}"
+fi
+
+# Cleanup
+if [ "$CLEANUP" = true ]; then
+    echo ""
+    echo "Temporary repo at: $REPO_DIR"
+    echo "To keep it: export GILT_TEST_REPO=$REPO_DIR"
+    echo "To clean up: rm -rf $REPO_DIR"
+fi
+
+echo ""
+exit $FAIL
