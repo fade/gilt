@@ -139,6 +139,8 @@
            #:draw-status-bar
            #:panel-select-next
            #:panel-select-prev
+           #:panel-select-page-down
+           #:panel-select-page-up
            #:panel-scroll-to-selection
            ;; Dialog class
            #:dialog
@@ -271,6 +273,15 @@
            #:git-bisect-skip
            #:git-bisect-reset
            #:git-bisect-log
+           #:enter-submodule
+           #:leave-submodule
+           #:*parent-repo-stack*
+           #:copy-to-clipboard
+           #:git-ignore-file
+           #:git-difftool
+           #:git-shell-command
+           #:git-remote-url-for-browser
+           #:open-in-browser
            #:git-push
            #:git-pull
            #:git-push-interactive

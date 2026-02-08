@@ -122,7 +122,11 @@
    (bisect-mode :accessor bisect-mode :initform nil)
    ;; Panel filter
    (filter-query :accessor filter-query :initform nil)
-   (filter-panel :accessor filter-panel :initform nil)))
+   (filter-panel :accessor filter-panel :initform nil)
+   ;; File tree view mode
+   (file-tree-mode :accessor file-tree-mode :initform nil)
+   ;; Range select
+   (range-select-start :accessor range-select-start :initform nil)))
 
 (defmethod initialize-instance :after ((view main-view) &key)
   ;; Create all panels
@@ -259,12 +263,17 @@
                                     entries)
                                    entries)))
          (setf (panel-title (files-panel view))
-               (if (and (filter-query view) (eql (filter-panel view) 1))
-                   (format nil "[2] Files (filter: ~A)" (filter-query view))
-                   (numbered-title 2 "Files" '("Worktrees" "Stashes"))))
+               (cond
+                 ((and (filter-query view) (eql (filter-panel view) 1))
+                  (format nil "[2] Files (filter: ~A)" (filter-query view)))
+                 ((file-tree-mode view)
+                  (numbered-title 2 "Files [tree]" '("Worktrees" "Stashes")))
+                 (t (numbered-title 2 "Files" '("Worktrees" "Stashes")))))
          (setf (panel-items (files-panel view))
-               (loop for e in filtered-entries
-                     collect (format-status-entry e)))))))
+               (if (file-tree-mode view)
+                   (format-file-tree filtered-entries)
+                   (loop for e in filtered-entries
+                         collect (format-status-entry e))))))))
   ;; Branches panel - local, remote, tags, or submodules based on toggle
   (let ((branches (git-branches (branch-sort-mode view)))
         (remote-branches (git-remote-branches))
@@ -370,6 +379,39 @@
                   (t :white)))
          (text (format nil "~A ~A" indicator (status-entry-file entry))))
     (list :colored color text)))
+
+(defun format-file-tree (entries)
+  "Format status entries as a tree view, grouping by directory."
+  (let ((dirs (make-hash-table :test 'equal))
+        (result nil))
+    ;; Group files by directory
+    (dolist (e entries)
+      (let* ((file (status-entry-file e))
+             (slash-pos (position #\/ file :from-end t))
+             (dir (if slash-pos (subseq file 0 slash-pos) ".")))
+        (push e (gethash dir dirs))))
+    ;; Sort directories and format
+    (let ((sorted-dirs (sort (loop for k being the hash-keys of dirs collect k) #'string<)))
+      (dolist (dir sorted-dirs)
+        ;; Directory header
+        (unless (string= dir ".")
+          (push (list :colored :bright-cyan (format nil "  ~A/" dir)) result))
+        ;; Files in this directory
+        (dolist (e (reverse (gethash dir dirs)))
+          (let* ((file (status-entry-file e))
+                 (slash-pos (position #\/ file :from-end t))
+                 (basename (if slash-pos (subseq file (1+ slash-pos)) file))
+                 (status (status-entry-status e))
+                 (indicator (case status
+                              (:modified "M") (:added "A") (:deleted "D")
+                              (:untracked "?") (:renamed "R") (:conflict "!") (t " ")))
+                 (color (case status
+                          (:modified :bright-yellow) (:added :bright-green)
+                          (:deleted :bright-red) (:untracked :bright-magenta)
+                          (:renamed :bright-cyan) (:conflict :bright-red) (t :white)))
+                 (indent (if (string= dir ".") "  " "    ")))
+            (push (list :colored color (format nil "~A~A ~A" indent indicator basename)) result)))))
+    (nreverse result)))
 
 (defun get-author-initials (author)
   "Extract initials from author name (e.g., 'Glenn Thompson' -> 'GT')"
@@ -538,12 +580,12 @@
      '(("j/k" . "navigate") ("Tab" . "panels") ("r" . "refresh") ("q" . "quit")))
     (1 ; Files panel
      '(("j/k" . "navigate") ("Space" . "stage/unstage") ("e" . "edit/hunks") ("d" . "discard")
-       ("c" . "commit") ("C" . "commit+editor") ("w" . "commit-no-hook") ("r" . "refresh") ("q" . "quit")))
+       ("c" . "commit") ("v" . "range") ("T" . "tree") ("I" . "ignore") ("x" . "difftool") ("y" . "copy") ("r" . "refresh") ("q" . "quit")))
     (2 ; Branches panel
      '(("j/k" . "navigate") ("Enter" . "checkout/track") ("n" . "new") ("N" . "rename")
        ("w" . "local/remote") ("M" . "merge") ("R" . "rebase") ("F" . "ff") ("s" . "sort") ("D" . "delete") ("r" . "refresh") ("q" . "quit")))
     (3 ; Commits panel
-     '(("j/k" . "navigate") ("i" . "rebase") ("b" . "bisect") ("S" . "squash") ("C" . "cherry-pick") ("R" . "revert") ("r" . "refresh") ("q" . "quit")))
+     '(("j/k" . "navigate") ("i" . "rebase") ("b" . "bisect") ("y" . "copy") ("o" . "browser") ("S" . "squash") ("C" . "cherry-pick") ("R" . "revert") ("r" . "refresh") ("q" . "quit")))
     (4 ; Stash panel
      '(("j/k" . "navigate") ("s" . "stash") ("g" . "pop") ("r" . "refresh") ("q" . "quit")))
     (t ; Default
@@ -677,6 +719,11 @@
                        "   D          Remove worktree/Drop stash"
                        "   P          Pop stash (in Stashes view)"
                        "   Enter      Apply stash (in Stashes view)"
+                       "   T          Toggle file tree view (flat/tree)"
+                       "   v          Range select (start/end, then stage/unstage)"
+                       "   I          Add file to .gitignore"
+                       "   x          Launch external diff tool"
+                       "   y          Copy file path to clipboard"
                        ""
                        " COMMITS (panel 4)"
                        "   /          Search commits"
@@ -704,7 +751,10 @@
                        "   s          Sort branches (name/date/recent)"
                        "   D          Delete branch/tag/remote branch"
                        "   C          Cherry-pick from branch"
+                       "   y          Copy branch name to clipboard"
+                       "   o          Open branch in browser"
                        "   w          Cycle: Local/Remotes/Tags/Submodules"
+                       "   Enter      Enter submodule (in Submodules view)"
                        "   t          Create tag (in Tags view)"
                        "   T          Push tag to remote (in Tags view)"
                        "   Space      Checkout tag (detached HEAD, in Tags view)"
@@ -730,7 +780,16 @@
                        ""
                        " SEARCH / FILTER"
                        "   /          Search commits (panel 4) or filter (panels 2,3,5)"
-                       "              Filter shows only matching items in panel"
+                       ""
+                       " CLIPBOARD / BROWSER"
+                       "   y          Copy (file path, branch name, or commit hash)"
+                       "   o          Open in browser (commit or branch URL)"
+                       ""
+                       " SHELL"
+                       "   :          Run shell command (vim-style)"
+                       ""
+                       " NAVIGATION"
+                       "   PgUp/PgDn  Page up/down in lists"
                        ""
                        " DIFF OPTIONS"
                        "   }          Increase diff context lines"
@@ -1302,6 +1361,22 @@
                   (log-command view (format nil "git stash pop stash@{~D}" idx))
                   (git-stash-pop idx)
                   (refresh-data view))))
+             ;; Ignore File dialog
+             ((string= (dialog-title dlg) "Ignore File")
+              (let ((file (getf (dialog-data dlg) :file)))
+                (when file
+                  (let ((msg (git-ignore-file file)))
+                    (log-command view msg)
+                    (refresh-data view)))))
+             ;; Shell Command dialog
+             ((string= (dialog-title dlg) "Shell Command")
+              (let ((cmd (first (dialog-input-lines dlg))))
+                (when (and cmd (> (length cmd) 0))
+                  (log-command view (format nil "$ ~A" cmd))
+                  (let ((output (git-shell-command cmd)))
+                    (when (and output (> (length output) 0))
+                      (log-command view (string-trim '(#\Newline) output)))
+                    (refresh-data view)))))
              ;; Filter Files dialog
              ((string= (dialog-title dlg) "Filter Files")
               (let* ((buttons (dialog-buttons dlg))
@@ -1869,6 +1944,20 @@
              ;; Focus main panel
              (setf (panel-focused (main-panel view)) t)))
        nil)
+      ;; Page down
+      ((eq (key-event-code key) +key-page-down+)
+       (if (panel-focused (main-panel view))
+           (panel-select-page-down (main-panel view))
+           (progn (panel-select-page-down panel)
+                  (update-main-content view)))
+       nil)
+      ;; Page up
+      ((eq (key-event-code key) +key-page-up+)
+       (if (panel-focused (main-panel view))
+           (panel-select-page-up (main-panel view))
+           (progn (panel-select-page-up panel)
+                  (update-main-content view)))
+       nil)
       ;; Stage/unstage with space (when on files panel) or checkout tag (tags view)
       ((and (key-event-char key) (char= (key-event-char key) #\Space))
        (cond
@@ -1910,6 +1999,15 @@
               (let ((st (nth selected stashes)))
                 (log-command view (format nil "git stash apply stash@{~D}" (stash-index st)))
                 (git-stash-apply (stash-index st))
+                (refresh-data view)))))
+         ;; Submodules view - enter submodule
+         ((and (= focused-idx 2) (show-submodules view))
+          (let* ((submodules (submodule-list view))
+                 (selected (panel-selected panel)))
+            (when (and submodules (< selected (length submodules)))
+              (let ((sm (nth selected submodules)))
+                (log-command view (format nil "Entering submodule: ~A" (submodule-name sm)))
+                (enter-submodule (submodule-path sm))
                 (refresh-data view)))))
          ;; Branches panel
          ((= focused-idx 2)
@@ -2051,6 +2149,132 @@
                (log-command view "git add -A")
                (git-stage-all))))
        (refresh-data view)
+       nil)
+      ;; Copy to clipboard - 'y' (context-sensitive yank)
+      ((and (key-event-char key) (char= (key-event-char key) #\y))
+       (let ((text nil)
+             (what nil))
+         (cond
+           ;; Files panel - copy file path
+           ((= focused-idx 1)
+            (let* ((entries (status-entries view))
+                   (selected (panel-selected panel)))
+              (when (and entries (< selected (length entries)))
+                (setf text (status-entry-file (nth selected entries)))
+                (setf what "file path"))))
+           ;; Branches panel - copy branch name
+           ((= focused-idx 2)
+            (let* ((branches (branch-list view))
+                   (selected (panel-selected panel)))
+              (when (and branches (< selected (length branches)))
+                (setf text (nth selected branches))
+                (setf what "branch name"))))
+           ;; Commits panel - copy commit hash
+           ((= focused-idx 3)
+            (let* ((commits (commit-list view))
+                   (selected (panel-selected panel)))
+              (when (and commits (< selected (length commits)))
+                (setf text (log-entry-short-hash (nth selected commits)))
+                (setf what "commit hash")))))
+         (when text
+           (if (copy-to-clipboard text)
+               (log-command view (format nil "Copied ~A: ~A" what text))
+               (log-command view (format nil "Copy failed (no clipboard tool)")))))
+       nil)
+      ;; Ignore file - 'I' (capital, when on files panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\I))
+       (when (= focused-idx 1)
+         (let* ((entries (status-entries view))
+                (selected (panel-selected panel)))
+           (when (and entries (< selected (length entries)))
+             (let ((file (status-entry-file (nth selected entries))))
+               (setf (active-dialog view)
+                     (make-dialog :title "Ignore File"
+                                  :message (format nil "Add '~A' to .gitignore?" file)
+                                  :data (list :file file)
+                                  :buttons '("Ignore" "Cancel")))))))
+       nil)
+      ;; External diff tool - 'x' (when on files panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\x))
+       (when (= focused-idx 1)
+         (let* ((entries (status-entries view))
+                (selected (panel-selected panel)))
+           (when (and entries (< selected (length entries)))
+             (let ((file (status-entry-file (nth selected entries))))
+               (log-command view (format nil "git difftool -- ~A" file))
+               (gilt.terminal:restore-terminal)
+               (leave-alternate-screen)
+               (git-difftool file)
+               (enter-alternate-screen)
+               (gilt.terminal:setup-terminal)
+               (clear-screen)
+               (refresh-data view)))))
+       nil)
+      ;; Shell command - ':' (global, vim-style)
+      ((and (key-event-char key) (char= (key-event-char key) #\:))
+       (setf (active-dialog view)
+             (make-dialog :title "Shell Command"
+                          :input-mode t
+                          :buttons '("Run" "Cancel")))
+       nil)
+      ;; File tree toggle - 'T' (capital, when on files panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\T))
+       (when (and (= focused-idx 1) (not (show-worktrees view)) (not (show-stashes view)))
+         (setf (file-tree-mode view) (not (file-tree-mode view)))
+         (log-command view (format nil "File view: ~A" (if (file-tree-mode view) "tree" "flat")))
+         (refresh-data view))
+       nil)
+      ;; Range select - 'v' (when on files panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\v))
+       (when (= focused-idx 1)
+         (if (range-select-start view)
+             ;; End range select - stage/unstage the range
+             (let* ((start (range-select-start view))
+                    (end (panel-selected panel))
+                    (lo (min start end))
+                    (hi (max start end))
+                    (entries (status-entries view)))
+               (when entries
+                 (loop for i from lo to (min hi (1- (length entries)))
+                       for entry = (nth i entries)
+                       do (if (status-entry-staged-p entry)
+                              (git-unstage-file (status-entry-file entry))
+                              (git-stage-file (status-entry-file entry))))
+                 (log-command view (format nil "Toggled ~D files (range ~D-~D)" (1+ (- hi lo)) lo hi))
+                 (setf (range-select-start view) nil)
+                 (refresh-data view)))
+             ;; Start range select
+             (progn
+               (setf (range-select-start view) (panel-selected panel))
+               (log-command view (format nil "Range select started at ~D" (panel-selected panel))))))
+       nil)
+      ;; Open in browser - 'o' (context-sensitive)
+      ((and (key-event-char key) (char= (key-event-char key) #\o))
+       (let ((base-url (git-remote-url-for-browser)))
+         (cond
+           ;; Commits panel - open commit URL
+           ((and (= focused-idx 3) base-url)
+            (let* ((commits (commit-list view))
+                   (selected (panel-selected panel)))
+              (when (and commits (< selected (length commits)))
+                (let* ((commit (nth selected commits))
+                       (url (format nil "~A/commit/~A" base-url (log-entry-hash commit))))
+                  (if (open-in-browser url)
+                      (log-command view (format nil "Opened ~A" url))
+                      (log-command view "Failed to open browser"))))))
+           ;; Branches panel - open branch URL
+           ((and (= focused-idx 2) base-url)
+            (let* ((branches (branch-list view))
+                   (selected (panel-selected panel)))
+              (when (and branches (< selected (length branches)))
+                (let* ((branch (nth selected branches))
+                       (url (format nil "~A/tree/~A" base-url branch)))
+                  (if (open-in-browser url)
+                      (log-command view (format nil "Opened ~A" url))
+                      (log-command view "Failed to open browser"))))))
+           ;; No remote URL
+           ((not base-url)
+            (log-command view "No remote URL found"))))
        nil)
       ;; Diff context size - '{' decrease, '}' increase (global)
       ((and (key-event-char key) (char= (key-event-char key) #\}))

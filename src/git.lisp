@@ -68,6 +68,22 @@
       (setf *current-repo* (make-instance 'git-repository :path root :name name))))
   *current-repo*)
 
+(defvar *parent-repo-stack* nil "Stack of parent repos for submodule navigation")
+
+(defun enter-submodule (submodule-path)
+  "Enter a submodule by changing *current-repo* to point to it. Pushes current repo onto stack."
+  (let* ((repo (ensure-repo))
+         (full-path (namestring (merge-pathnames submodule-path (repo-path-dir repo))))
+         (name (car (last (cl-ppcre:split "/" (string-right-trim "/" full-path))))))
+    (push repo *parent-repo-stack*)
+    (setf *current-repo* (make-instance 'git-repository :path full-path :name name))))
+
+(defun leave-submodule ()
+  "Leave current submodule and return to parent repo. Returns t if successful."
+  (when *parent-repo-stack*
+    (setf *current-repo* (pop *parent-repo-stack*))
+    t))
+
 ;;; Convenience functions that delegate to *current-repo*
 
 (defun git-run (&rest args)
@@ -1285,3 +1301,92 @@
   (if index
       (git-run "stash" "branch" branch-name (format nil "stash@{~D}" index))
       (git-run "stash" "branch" branch-name)))
+
+;;; Clipboard support
+
+(defun copy-to-clipboard (text)
+  "Copy TEXT to system clipboard. Tries xclip, xsel, wl-copy, pbcopy."
+  (let ((programs '(("xclip" "-selection" "clipboard")
+                    ("xsel" "--clipboard" "--input")
+                    ("wl-copy")
+                    ("pbcopy"))))
+    (loop for prog-args in programs
+          for prog = (first prog-args)
+          for args = (rest prog-args)
+          when (ignore-errors
+                 (let ((proc (sb-ext:run-program prog args
+                                                 :input :stream
+                                                 :output nil
+                                                 :error nil
+                                                 :search t
+                                                 :wait nil)))
+                   (write-string text (sb-ext:process-input proc))
+                   (close (sb-ext:process-input proc))
+                   (sb-ext:process-wait proc)
+                   (zerop (sb-ext:process-exit-code proc))))
+            do (return t)
+          finally (return nil))))
+
+;;; Ignore file
+
+(defun git-ignore-file (file)
+  "Add FILE to .gitignore in the repository root."
+  (let* ((repo (ensure-repo))
+         (gitignore-path (merge-pathnames ".gitignore" (repo-path-dir repo))))
+    (with-open-file (s gitignore-path
+                       :direction :output
+                       :if-exists :append
+                       :if-does-not-exist :create)
+      (format s "~&~A~%" file))
+    (format nil "Added '~A' to .gitignore" file)))
+
+;;; External diff tool
+
+(defun git-difftool (file)
+  "Launch external diff tool for FILE. Suspends TUI."
+  (let* ((repo (ensure-repo))
+         (dir (repo-path-dir repo)))
+    (uiop:run-program (list "git" "difftool" "--no-prompt" "--" file)
+                       :directory dir
+                       :input :interactive
+                       :output :interactive
+                       :error-output :interactive)))
+
+;;; Shell command execution
+
+(defun git-shell-command (command)
+  "Run an arbitrary shell command in the repo directory. Returns output string."
+  (let* ((repo (ensure-repo))
+         (dir (repo-path-dir repo)))
+    (with-output-to-string (s)
+      (sb-ext:run-program "/bin/sh" (list "-c" command)
+                          :output s
+                          :error s
+                          :directory dir
+                          :search t))))
+
+;;; Open in browser
+
+(defun git-remote-url-for-browser ()
+  "Get the remote URL converted to a browser-friendly HTTPS URL."
+  (let* ((url (string-trim '(#\Newline #\Space)
+                            (ignore-errors (git-run "remote" "get-url" "origin")))))
+    (when (and url (> (length url) 0))
+      ;; Convert git@github.com:user/repo.git to https://github.com/user/repo
+      (cond
+        ((cl-ppcre:scan "^git@" url)
+         (let ((https-url (cl-ppcre:regex-replace "^git@([^:]+):" url "https://\\1/")))
+           (cl-ppcre:regex-replace "\\.git$" https-url "")))
+        ((cl-ppcre:scan "^https?://" url)
+         (cl-ppcre:regex-replace "\\.git$" url ""))
+        (t url)))))
+
+(defun open-in-browser (url)
+  "Open URL in the default browser. Tries xdg-open, open (macOS), wslview."
+  (loop for prog in '("xdg-open" "open" "wslview")
+        when (ignore-errors
+               (sb-ext:run-program prog (list url)
+                                   :output nil :error nil :search t :wait nil)
+               t)
+          do (return t)
+        finally (return nil)))

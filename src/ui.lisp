@@ -265,6 +265,17 @@
     (decf (panel-selected panel))
     (panel-scroll-to-selection panel)))
 
+(defun panel-select-page-down (panel &optional (page-size 10))
+  "Move selection down by PAGE-SIZE items"
+  (let ((max-idx (1- (length (panel-items panel)))))
+    (setf (panel-selected panel) (min max-idx (+ (panel-selected panel) page-size)))
+    (panel-scroll-to-selection panel)))
+
+(defun panel-select-page-up (panel &optional (page-size 10))
+  "Move selection up by PAGE-SIZE items"
+  (setf (panel-selected panel) (max 0 (- (panel-selected panel) page-size)))
+  (panel-scroll-to-selection panel))
+
 (defun panel-scroll-to-selection (panel)
   "Adjust scroll offset to keep selection visible"
   (let* ((selected (panel-selected panel))

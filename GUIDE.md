@@ -79,6 +79,8 @@ Each commit line shows:
 | `r` | Refresh all data |
 | `q` | Quit Gilt |
 | `/` | Search commits or filter files/branches/stashes |
+| `:` | Run shell command (vim-style) |
+| `PgUp`/`PgDn` | Page up/down in lists |
 | `z` | Undo last git command (via reflog) |
 | `Z` | Redo last undone command |
 
@@ -89,6 +91,11 @@ Each commit line shows:
 | `Space` | Stage/unstage selected file |
 | `a` | Stage all / unstage all toggle |
 | `e` | Edit file (conflicts) or enter hunk staging mode |
+| `T` (capital) | Toggle file tree view (flat/tree) |
+| `v` | Range select (start/end, then stage/unstage range) |
+| `I` (capital) | Add file to .gitignore |
+| `x` | Launch external diff tool |
+| `y` | Copy file path to clipboard |
 | `b` | Blame view - show git blame for file |
 | `d` | Discard changes to selected file |
 | `o` | Resolve conflict with "ours" (your version) |
@@ -146,6 +153,9 @@ Press `w` in the Files panel to cycle to Stashes view.
 | `F` (capital) | Fast-forward branch to match upstream |
 | `u` | Set/unset upstream tracking branch |
 | `s` | Sort branches (name/date/recent) |
+| `y` | Copy branch name to clipboard |
+| `o` | Open branch in browser |
+| `Enter` | Enter submodule (in Submodules view) |
 | `D` (capital) | Delete selected branch |
 | `C` (capital) | Cherry-pick commits from selected branch |
 
@@ -195,6 +205,8 @@ Press `w` three times from Local branches to reach Submodules view.
 | `R` (capital) | Revert selected commit |
 | `i` | Interactive rebase (select range, then mark actions) |
 | `b` | Start bisect (then `b`:bad `g`:good `Q`:reset) |
+| `y` | Copy commit hash to clipboard |
+| `o` | Open commit in browser |
 
 ### Stash Panel `[5]`
 

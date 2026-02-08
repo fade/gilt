@@ -33,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sort branches** — Press `s` on branches panel to cycle sort: name/date/recent
 - **Bisect** — Press `b` on commits panel to start bisect, then `b`:bad `g`:good `Q`:reset
 - **Search / filter** — Press `/` on files, branches, or stash panels to filter items
+- **Copy to clipboard** — Press `y` to copy file path, branch name, or commit hash
+- **Open in browser** — Press `o` to open commit or branch URL in browser
+- **Shell command** — Press `:` to run arbitrary shell commands (vim-style)
+- **External diff tool** — Press `x` on files panel to launch `git difftool`
+- **Ignore file** — Press `I` on files panel to add file to `.gitignore`
+- **File tree view** — Press `T` on files panel to toggle flat/tree layout
+- **Range select** — Press `v` on files panel to start/end range, stage/unstage range
+- **Page up/down** — `PgUp`/`PgDn` for page navigation in long lists
+- **Enter submodule** — Press `Enter` on submodule to navigate into it as nested repo
 - **ROADMAP.md** — Feature roadmap tracking implemented and planned features
 
 ### Fixed

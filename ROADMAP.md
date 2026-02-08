@@ -111,15 +111,15 @@
 
 ### Lower Priority
 
-- [ ] **File tree view** — toggle between flat and tree file layout
-- [ ] **Copy to clipboard** — copy commit hash, branch name, file path
-- [ ] **Open in browser** — open commit or PR URL in browser
-- [ ] **Shell command execution** — run arbitrary git/shell commands
-- [ ] **External diff tool** — launch `git difftool` for selected file
-- [ ] **Ignore file** — add file to .gitignore
-- [ ] **Range select** — multi-select items with `v` key
-- [ ] **Page up/down** — page navigation in long lists
-- [ ] **Enter submodule** — navigate into submodule as nested repo
+- [x] **File tree view** — toggle between flat and tree file layout
+- [x] **Copy to clipboard** — copy commit hash, branch name, file path
+- [x] **Open in browser** — open commit or PR URL in browser
+- [x] **Shell command execution** — run arbitrary git/shell commands
+- [x] **External diff tool** — launch `git difftool` for selected file
+- [x] **Ignore file** — add file to .gitignore
+- [x] **Range select** — multi-select items with `v` key
+- [x] **Page up/down** — page navigation in long lists
+- [x] **Enter submodule** — navigate into submodule as nested repo
 - [ ] **Recent repo switching** — switch between recently opened repos
 - [ ] **Screen mode cycling** — normal/half/fullscreen layout modes
 - [ ] **Custom command keybindings** — user-defined commands in config file
