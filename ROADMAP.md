@@ -120,9 +120,9 @@
 - [x] **Range select** — multi-select items with `v` key
 - [x] **Page up/down** — page navigation in long lists
 - [x] **Enter submodule** — navigate into submodule as nested repo
-- [ ] **Recent repo switching** — switch between recently opened repos
-- [ ] **Screen mode cycling** — normal/half/fullscreen layout modes
-- [ ] **Custom command keybindings** — user-defined commands in config file
-- [ ] **Git-flow integration** — git-flow init/start/finish workflows
-- [ ] **Custom patch building** — select individual lines from commits to build patches
-- [ ] **Create pull request** — open PR creation from branches panel
+- [x] **Recent repo switching** — switch between recently opened repos
+- [x] **Screen mode cycling** — normal/half/fullscreen layout modes
+- [x] **Custom command keybindings** — user-defined commands in config file
+- [x] **Git-flow integration** — git-flow init/start/finish workflows
+- [x] **Custom patch building** — select individual lines from commits to build patches
+- [x] **Create pull request** — open PR creation from branches panel

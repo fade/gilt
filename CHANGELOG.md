@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Range select** — Press `v` on files panel to start/end range, stage/unstage range
 - **Page up/down** — `PgUp`/`PgDn` for page navigation in long lists
 - **Enter submodule** — Press `Enter` on submodule to navigate into it as nested repo
+- **Recent repo switching** — Press `L` to show recent repos, Enter to switch
+- **Screen mode cycling** — Press `+` to cycle normal/half/full layout modes
+- **Create pull request** — Press `O` on branches panel to open PR in browser
+- **Git-flow integration** — Press `E` for git-flow menu (feature/release/hotfix)
+- **Custom command keybindings** — Define in `~/.config/gilt/commands.conf` (key=command)
+- **Custom patch building** — `git apply --cached` support for building patches
 - **ROADMAP.md** — Feature roadmap tracking implemented and planned features
 
 ### Fixed

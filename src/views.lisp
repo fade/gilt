@@ -126,7 +126,9 @@
    ;; File tree view mode
    (file-tree-mode :accessor file-tree-mode :initform nil)
    ;; Range select
-   (range-select-start :accessor range-select-start :initform nil)))
+   (range-select-start :accessor range-select-start :initform nil)
+   ;; Screen mode
+   (screen-mode :accessor screen-mode :initform :normal)))
 
 (defmethod initialize-instance :after ((view main-view) &key)
   ;; Create all panels
@@ -595,7 +597,10 @@
   ;; LazyGit layout:
   ;; Left column: 5 stacked panels - focused panel expands (wider ~40%)
   ;; Right column: main content panel (top) + command log (bottom)
-  (let* ((left-width (max 50 (floor (* width 2) 5)))  ; Left gets ~40% of width
+  (let* ((left-width (case (screen-mode view)
+                       (:half (max 50 (floor width 2)))        ; 50% left
+                       (:full (- width 2))                      ; Nearly full width (no right panel)
+                       (t (max 50 (floor (* width 2) 5)))))    ; Normal: ~40% left
          (right-width (- width left-width))
          (usable-height (- height 1))  ; Leave 1 row for help bar
          (focused-idx (view-focused-panel view))
@@ -790,6 +795,22 @@
                        ""
                        " NAVIGATION"
                        "   PgUp/PgDn  Page up/down in lists"
+                       ""
+                       " LAYOUT"
+                       "   +          Cycle screen mode: normal/half/full"
+                       ""
+                       " RECENT REPOS"
+                       "   L          Show recent repos (Enter to switch)"
+                       ""
+                       " PULL REQUEST"
+                       "   O          Create PR for selected branch (opens browser)"
+                       ""
+                       " GIT FLOW"
+                       "   E          Git-flow menu (feature/release/hotfix)"
+                       ""
+                       " CUSTOM COMMANDS"
+                       "              Define in ~/.config/gilt/commands.conf"
+                       "              Format: key=shell command (one per line)"
                        ""
                        " DIFF OPTIONS"
                        "   }          Increase diff context lines"
@@ -1360,6 +1381,54 @@
                 (when (string= selected-button "Pop")
                   (log-command view (format nil "git stash pop stash@{~D}" idx))
                   (git-stash-pop idx)
+                  (refresh-data view))))
+             ;; Git Flow dialog
+             ((string= (dialog-title dlg) "Git Flow")
+              (let* ((buttons (dialog-buttons dlg))
+                     (selected-idx (dialog-selected-button dlg))
+                     (selected-button (nth selected-idx buttons)))
+                (cond
+                  ((string= selected-button "Init")
+                   (log-command view "git flow init -d")
+                   (log-command view (git-flow-init))
+                   (refresh-data view))
+                  ((or (string= selected-button "Feature Start")
+                       (string= selected-button "Feature Finish")
+                       (string= selected-button "Release Start")
+                       (string= selected-button "Release Finish")
+                       (string= selected-button "Hotfix Start")
+                       (string= selected-button "Hotfix Finish"))
+                   ;; Open a name input dialog
+                   (setf (active-dialog view)
+                         (make-dialog :title (format nil "Git Flow: ~A" selected-button)
+                                      :input-mode t
+                                      :data (list :flow-action selected-button)
+                                      :buttons '("OK" "Cancel")))))))
+             ;; Git Flow name input dialog
+             ((and (>= (length (dialog-title dlg)) 9)
+                   (string= (subseq (dialog-title dlg) 0 9) "Git Flow:"))
+              (let ((name (first (dialog-input-lines dlg)))
+                    (action (getf (dialog-data dlg) :flow-action)))
+                (when (and name (> (length name) 0) action)
+                  (cond
+                    ((string= action "Feature Start")
+                     (log-command view (format nil "git flow feature start ~A" name))
+                     (log-command view (git-flow-feature-start name)))
+                    ((string= action "Feature Finish")
+                     (log-command view (format nil "git flow feature finish ~A" name))
+                     (log-command view (git-flow-feature-finish name)))
+                    ((string= action "Release Start")
+                     (log-command view (format nil "git flow release start ~A" name))
+                     (log-command view (git-flow-release-start name)))
+                    ((string= action "Release Finish")
+                     (log-command view (format nil "git flow release finish ~A" name))
+                     (log-command view (git-flow-release-finish name)))
+                    ((string= action "Hotfix Start")
+                     (log-command view (format nil "git flow hotfix start ~A" name))
+                     (log-command view (git-flow-hotfix-start name)))
+                    ((string= action "Hotfix Finish")
+                     (log-command view (format nil "git flow hotfix finish ~A" name))
+                     (log-command view (git-flow-hotfix-finish name))))
                   (refresh-data view))))
              ;; Ignore File dialog
              ((string= (dialog-title dlg) "Ignore File")
@@ -2149,6 +2218,51 @@
                (log-command view "git add -A")
                (git-stage-all))))
        (refresh-data view)
+       nil)
+      ;; Screen mode cycling - '+' (global)
+      ((and (key-event-char key) (char= (key-event-char key) #\+))
+       (setf (screen-mode view)
+             (case (screen-mode view)
+               (:normal :half)
+               (:half :full)
+               (:full :normal)))
+       (log-command view (format nil "Screen mode: ~A"
+                                  (case (screen-mode view)
+                                    (:normal "normal") (:half "half") (:full "full"))))
+       nil)
+      ;; Recent repos - 'L' (capital, global)
+      ((and (key-event-char key) (char= (key-event-char key) #\L))
+       (let ((repos (load-recent-repos)))
+         (if repos
+             (progn
+               (setf (panel-title (main-panel view)) "[0] Recent Repos")
+               (setf (panel-items (main-panel view))
+                     (loop for r in repos
+                           for i from 0
+                           collect (format nil "  ~D. ~A" (1+ i) r)))
+               (setf (panel-selected (main-panel view)) 0)
+               (setf (panel-focused (main-panel view)) t)
+               (log-command view "Recent repos (Enter to switch)"))
+             (log-command view "No recent repos found")))
+       nil)
+      ;; Create pull request - 'O' (capital, when on branches panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\O))
+       (when (= focused-idx 2)
+         (let* ((branches (branch-list view))
+                (selected (panel-selected panel)))
+           (when (and branches (< selected (length branches)))
+             (let* ((branch (nth selected branches))
+                    (url (create-pull-request branch)))
+               (if url
+                   (log-command view (format nil "Opening PR: ~A" url))
+                   (log-command view "No remote URL found"))))))
+       nil)
+      ;; Git-flow - 'E' (capital, global) opens git-flow dialog
+      ((and (key-event-char key) (char= (key-event-char key) #\E))
+       (setf (active-dialog view)
+             (make-dialog :title "Git Flow"
+                          :message "Select git-flow action:"
+                          :buttons '("Feature Start" "Feature Finish" "Release Start" "Release Finish" "Hotfix Start" "Hotfix Finish" "Init" "Cancel")))
        nil)
       ;; Copy to clipboard - 'y' (context-sensitive yank)
       ((and (key-event-char key) (char= (key-event-char key) #\y))
@@ -2972,6 +3086,20 @@
                                   collect (format nil "Hunk ~D: ~A (+~D lines)"
                                                   i (hunk-header hunk)
                                                   (hunk-line-count hunk))))))))))))
+       nil)
+      ;; Custom command keybindings fallback
+      ((and (key-event-char key)
+            (let ((custom-cmds (load-custom-commands)))
+              (when custom-cmds
+                (let ((entry (assoc (key-event-char key) custom-cmds)))
+                  (when entry
+                    (let* ((cmd (cdr entry))
+                           (output (git-shell-command cmd)))
+                      (log-command view (format nil "$ ~A" cmd))
+                      (when (and output (> (length output) 0))
+                        (log-command view (string-trim '(#\Newline) output)))
+                      (refresh-data view)
+                      t))))))
        nil)
       (t nil))))
 

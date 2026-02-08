@@ -282,6 +282,21 @@
            #:git-shell-command
            #:git-remote-url-for-browser
            #:open-in-browser
+           #:gilt-config-dir
+           #:load-recent-repos
+           #:save-recent-repo
+           #:create-pull-request
+           #:git-flow-init
+           #:git-flow-feature-start
+           #:git-flow-feature-finish
+           #:git-flow-release-start
+           #:git-flow-release-finish
+           #:git-flow-hotfix-start
+           #:git-flow-hotfix-finish
+           #:custom-commands-file
+           #:load-custom-commands
+           #:git-diff-lines
+           #:git-apply-patch
            #:git-push
            #:git-pull
            #:git-push-interactive

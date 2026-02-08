@@ -1390,3 +1390,135 @@
                t)
           do (return t)
         finally (return nil)))
+
+;;; Recent repos
+
+(defun gilt-config-dir ()
+  "Get the gilt config directory (~/.config/gilt/), creating it if needed."
+  (let ((dir (merge-pathnames ".config/gilt/" (user-homedir-pathname))))
+    (ensure-directories-exist dir)
+    dir))
+
+(defun recent-repos-file ()
+  "Path to the recent repos file."
+  (merge-pathnames "recent-repos.txt" (gilt-config-dir)))
+
+(defun load-recent-repos ()
+  "Load list of recent repo paths from config file."
+  (let ((file (recent-repos-file)))
+    (if (probe-file file)
+        (with-open-file (s file :direction :input)
+          (loop for line = (read-line s nil nil)
+                while line
+                when (> (length (string-trim '(#\Space #\Tab) line)) 0)
+                  collect (string-trim '(#\Space #\Tab) line)))
+        nil)))
+
+(defun save-recent-repo (path)
+  "Add PATH to the recent repos list (max 10, most recent first)."
+  (let* ((clean-path (string-right-trim "/" (namestring path)))
+         (existing (load-recent-repos))
+         (filtered (remove clean-path existing :test #'string=))
+         (new-list (subseq (cons clean-path filtered) 0 (min 10 (1+ (length filtered))))))
+    (with-open-file (s (recent-repos-file) :direction :output
+                       :if-exists :supersede :if-does-not-exist :create)
+      (dolist (r new-list)
+        (format s "~A~%" r)))
+    new-list))
+
+;;; Create pull request
+
+(defun create-pull-request (branch)
+  "Open the create PR page in browser for BRANCH."
+  (let ((base-url (git-remote-url-for-browser)))
+    (when base-url
+      (let ((url (format nil "~A/compare/~A?expand=1" base-url branch)))
+        (open-in-browser url)
+        url))))
+
+;;; Git-flow
+
+(defun git-flow-init ()
+  "Initialize git-flow in the repository."
+  (git-run "flow" "init" "-d"))
+
+(defun git-flow-feature-start (name)
+  "Start a new git-flow feature branch."
+  (git-run "flow" "feature" "start" name))
+
+(defun git-flow-feature-finish (name)
+  "Finish a git-flow feature branch."
+  (git-run "flow" "feature" "finish" name))
+
+(defun git-flow-release-start (version)
+  "Start a new git-flow release."
+  (git-run "flow" "release" "start" version))
+
+(defun git-flow-release-finish (version)
+  "Finish a git-flow release."
+  (git-run "flow" "release" "finish" version))
+
+(defun git-flow-hotfix-start (name)
+  "Start a new git-flow hotfix."
+  (git-run "flow" "hotfix" "start" name))
+
+(defun git-flow-hotfix-finish (name)
+  "Finish a git-flow hotfix."
+  (git-run "flow" "hotfix" "finish" name))
+
+;;; Custom command keybindings
+
+(defun custom-commands-file ()
+  "Path to the custom commands config file."
+  (merge-pathnames "commands.conf" (gilt-config-dir)))
+
+(defun load-custom-commands ()
+  "Load custom commands from config file. Format: key=command per line.
+Returns alist of (char . command-string)."
+  (let ((file (custom-commands-file)))
+    (if (probe-file file)
+        (with-open-file (s file :direction :input)
+          (loop for line = (read-line s nil nil)
+                while line
+                for trimmed = (string-trim '(#\Space #\Tab) line)
+                when (and (> (length trimmed) 0)
+                          (char/= (char trimmed 0) #\#)
+                          (position #\= trimmed))
+                  collect (let ((pos (position #\= trimmed)))
+                            (cons (char trimmed 0)
+                                  (string-trim '(#\Space #\Tab)
+                                               (subseq trimmed (1+ pos)))))))
+        nil)))
+
+;;; Custom patch building
+
+(defun git-diff-lines (file)
+  "Get the raw diff output for FILE as a list of lines."
+  (let ((output (if file
+                    (git-run "diff" "--" file)
+                    (git-run "diff"))))
+    (when (and output (> (length output) 0))
+      (cl-ppcre:split "\\n" output))))
+
+(defun git-apply-patch (patch-text)
+  "Apply a patch from PATCH-TEXT string."
+  (let* ((repo (ensure-repo))
+         (dir (repo-path-dir repo)))
+    (let ((proc (sb-ext:run-program "git" (list "apply" "--cached" "-")
+                                    :input :stream
+                                    :output :stream
+                                    :error :stream
+                                    :directory dir
+                                    :search t
+                                    :wait nil)))
+      (write-string patch-text (sb-ext:process-input proc))
+      (close (sb-ext:process-input proc))
+      (sb-ext:process-wait proc)
+      (let ((exit (sb-ext:process-exit-code proc))
+            (err (let ((s (make-string-output-stream)))
+                   (loop for c = (read-char (sb-ext:process-error proc) nil nil)
+                         while c do (write-char c s))
+                   (get-output-stream-string s))))
+        (if (zerop exit)
+            "Patch applied successfully"
+            (format nil "Patch failed: ~A" (string-trim '(#\Newline) err)))))))

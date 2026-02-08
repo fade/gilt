@@ -81,6 +81,9 @@ Each commit line shows:
 | `/` | Search commits or filter files/branches/stashes |
 | `:` | Run shell command (vim-style) |
 | `PgUp`/`PgDn` | Page up/down in lists |
+| `+` | Cycle screen mode: normal/half/full |
+| `L` (capital) | Show recent repos (Enter to switch) |
+| `E` (capital) | Git-flow menu (feature/release/hotfix) |
 | `z` | Undo last git command (via reflog) |
 | `Z` | Redo last undone command |
 
@@ -155,6 +158,7 @@ Press `w` in the Files panel to cycle to Stashes view.
 | `s` | Sort branches (name/date/recent) |
 | `y` | Copy branch name to clipboard |
 | `o` | Open branch in browser |
+| `O` (capital) | Create pull request for branch (opens browser) |
 | `Enter` | Enter submodule (in Submodules view) |
 | `D` (capital) | Delete selected branch |
 | `C` (capital) | Cherry-pick commits from selected branch |

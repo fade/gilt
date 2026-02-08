@@ -46,6 +46,8 @@
 (defmethod app-init ((app application))
   ;; Initialize the git repository and set global for convenience functions
   (setf (app-repo app) (gilt.git:ensure-repo))
+  ;; Save current repo to recent repos list
+  (ignore-errors (gilt.git:save-recent-repo (gilt.git:repo-path (app-repo app))))
   ;; All views use main-view - the legacy subclasses were empty
   (setf (gethash :status (app-views app)) (make-instance 'main-view))
   (setf (gethash :log (app-views app)) (make-instance 'main-view))
