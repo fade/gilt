@@ -79,9 +79,7 @@
 
 ---
 
-## Planned
-
-### Medium Priority
+## Recently Completed
 
 - [x] **Rename branch** — rename a local branch
 - [x] **Stage all / unstage all toggle** — stage or unstage all files at once
@@ -89,16 +87,42 @@
 - [x] **Fast-forward branch** — fast-forward a branch to match its upstream
 - [x] **New branch from stash** — create a new branch and apply a stash to it
 
+---
+
+## Planned
+
+### High Priority
+
+- [ ] **Commit with editor** — open `$EDITOR` for commit message (supports multiline, verbose)
+- [ ] **Undo/redo** — use reflog to undo/redo the last git command (`z`/`Z`)
+
+### Medium Priority
+
+- [ ] **Commit without hook** — commit bypassing pre-commit hooks (`--no-verify`)
+- [ ] **Checkout tag** — checkout a tag as detached HEAD
+- [ ] **Rename stash** — rename a stash entry
+- [ ] **Set upstream** — set/unset tracking branch for local branch
+- [ ] **Diff context size** — increase/decrease lines of context in diff view
+- [ ] **Whitespace toggle** — toggle whitespace visibility in diffs
+- [ ] **Squash merge** — option for squash merge in merge dialog
+- [ ] **Sort branches** — sort branches by name, date, etc.
+- [ ] **Bisect** — interactive git bisect from commits panel
+- [ ] **Search / filter** — search and filter within all panels
+
 ### Lower Priority
 
-- [ ] **Search / filter** — search and filter within all panels
-- [ ] **Commit without hook** — commit bypassing pre-commit hooks
-- [ ] **Commit with editor** — open external editor for commit message
+- [ ] **File tree view** — toggle between flat and tree file layout
+- [ ] **Copy to clipboard** — copy commit hash, branch name, file path
+- [ ] **Open in browser** — open commit or PR URL in browser
+- [ ] **Shell command execution** — run arbitrary git/shell commands
+- [ ] **External diff tool** — launch `git difftool` for selected file
 - [ ] **Ignore file** — add file to .gitignore
-- [ ] **Set upstream** — set tracking branch for local branch
-- [ ] **Add remote** — add a new remote
-- [ ] **Remove remote** — remove an existing remote
-- [ ] **Rename stash** — rename a stash entry
-- [ ] **Checkout tag** — checkout a tag (detached HEAD)
-- [ ] **Tree view** — toggle between flat and tree file view
-- [ ] **Custom commands** — user-defined git commands
+- [ ] **Range select** — multi-select items with `v` key
+- [ ] **Page up/down** — page navigation in long lists
+- [ ] **Enter submodule** — navigate into submodule as nested repo
+- [ ] **Recent repo switching** — switch between recently opened repos
+- [ ] **Screen mode cycling** — normal/half/fullscreen layout modes
+- [ ] **Custom command keybindings** — user-defined commands in config file
+- [ ] **Git-flow integration** — git-flow init/start/finish workflows
+- [ ] **Custom patch building** — select individual lines from commits to build patches
+- [ ] **Create pull request** — open PR creation from branches panel
