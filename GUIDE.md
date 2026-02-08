@@ -134,6 +134,7 @@ Press `w` in the Files panel to cycle to Stashes view.
 | `w` | Cycle: Local → Remotes → Tags → Submodules |
 | `f` | Fetch (select remote) |
 | `M` (capital) | Merge selected branch into current |
+| `R` (capital) | Rebase current branch onto selected branch |
 | `D` (capital) | Delete selected branch |
 | `C` (capital) | Cherry-pick commits from selected branch |
 
@@ -179,6 +180,7 @@ Press `w` three times from Local branches to reach Submodules view.
 | `S` (capital) | Squash commits (select target commit) |
 | `C` (capital) | Cherry-pick selected commit |
 | `R` (capital) | Revert selected commit |
+| `i` | Interactive rebase (select range, then mark actions) |
 
 ### Stash Panel `[5]`
 
@@ -319,6 +321,43 @@ Apply commits from another branch to your current branch:
 7. Confirm in the dialog
 8. Press `Escape` to exit without cherry-picking
 
+### Interactive Rebase
+
+Rewrite commit history with full control over each commit:
+
+1. Navigate to the **Commits panel** (`Tab` or press `4`)
+2. Select the oldest commit you want to include in the rebase
+   - For example, to rebase the last 3 commits, select the 3rd commit from the top
+3. Press `i` to enter interactive rebase mode
+4. The panel title changes to show available actions
+5. For each commit, press a key to set its action:
+   - `p` — **pick** (keep commit as-is)
+   - `r` — **reword** (change commit message, opens input dialog)
+   - `s` — **squash** (combine with previous commit, not available on first)
+   - `f` — **fixup** (like squash but discard this commit's message)
+   - `d` — **drop** (remove commit entirely)
+6. Use `J`/`K` (capital) to **reorder** commits
+7. Press `Enter` to execute the rebase, or `q` to cancel
+
+Actions are color-coded:
+- **Green** = pick
+- **Cyan** = reword
+- **Magenta** = squash/fixup
+- **Red** = drop
+
+**Note:** Squash and fixup cannot be applied to the first commit in the list (there is no preceding commit to combine into).
+
+### Rebasing onto Another Branch
+
+Rebase your current branch onto a different branch:
+
+1. Navigate to the **Branches panel** (`Tab` or press `3`)
+2. Select the branch you want to rebase ONTO (the base branch)
+3. Press `R` (capital) to rebase
+4. Confirm in the dialog
+
+This is equivalent to `git rebase <selected-branch>` and replays your current branch's commits on top of the selected branch.
+
 ### Stashing Changes
 
 Temporarily save your changes:
@@ -399,21 +438,11 @@ Gilt works on various Unix systems including NixOS, standard Linux distributions
 
 ### Environment Variables
 
-If automatic detection fails, you can configure gilt manually:
-
 | Variable | Description | Example |
-|----------|-------------|---------|
-| `GILT_STTY_PATH` | Path to stty command | `/run/current-system/sw/bin/stty` |
-| `GILT_TTY_PATH` | Path to TTY device | `/dev/pts/1` |
+|----------|-------------|----------|
 | `GILT_ESCAPE_TIMEOUT` | Escape sequence timeout (seconds) | `0.01` |
 
-### NixOS Users
-
-Gilt automatically detects NixOS and uses the correct stty path. No configuration needed.
-
-### Alacritty Users
-
-Gilt detects Alacritty via `ALACRITTY_SOCKET` and optimizes escape sequence timing automatically.
+Since v0.13.0, Gilt uses FFI-based terminal control (POSIX termios) and no longer depends on `stty` or any external terminal utilities.
 
 ### Diagnostics
 
@@ -422,8 +451,6 @@ Run the diagnostic script to test system compatibility:
 ```bash
 sbcl --load diagnose.lisp
 ```
-
-See **[NIXOS_SUPPORT.md](NIXOS_SUPPORT.md)** for detailed cross-platform troubleshooting.
 
 ---
 

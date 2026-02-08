@@ -108,7 +108,11 @@
    (worktree-list :accessor worktree-list :initform nil)
    (show-worktrees :accessor show-worktrees :initform nil)
    ;; Stash view toggle (stash-list already exists above)
-   (show-stashes :accessor show-stashes :initform nil)))
+   (show-stashes :accessor show-stashes :initform nil)
+   ;; Interactive rebase mode
+   (rebase-mode :accessor rebase-mode :initform nil)
+   (rebase-entries :accessor rebase-entries :initform nil)
+   (rebase-base-commit :accessor rebase-base-commit :initform nil)))
 
 (defmethod initialize-instance :after ((view main-view) &key)
   ;; Create all panels
@@ -397,6 +401,47 @@
                   ;; Plain text
                   (t line))))
 
+(defun update-rebase-display (view)
+  "Update the commits panel to show the interactive rebase todo list."
+  (let ((entries (rebase-entries view)))
+    (setf (panel-items (commits-panel view))
+          (loop for entry in entries
+                collect (let ((action (rebase-action entry))
+                              (short-hash (rebase-short-hash entry))
+                              (msg (rebase-message entry)))
+                          (case action
+                            (:pick
+                             `(:multi-colored
+                               (:green ,(format nil "pick   "))
+                               (:yellow ,short-hash)
+                               (:white ,(format nil " ~A" msg))))
+                            (:reword
+                             `(:multi-colored
+                               (:cyan ,(format nil "reword "))
+                               (:yellow ,short-hash)
+                               (:white ,(format nil " ~A" 
+                                                (or (rebase-new-message entry) msg)))))
+                            (:squash
+                             `(:multi-colored
+                               (:magenta ,(format nil "squash "))
+                               (:yellow ,short-hash)
+                               (:white ,(format nil " ~A" msg))))
+                            (:fixup
+                             `(:multi-colored
+                               (:magenta ,(format nil "fixup  "))
+                               (:yellow ,short-hash)
+                               (:white ,(format nil " ~A" msg))))
+                            (:drop
+                             `(:multi-colored
+                               (:red ,(format nil "drop   "))
+                               (:bright-black ,short-hash)
+                               (:bright-black ,(format nil " ~A" msg))))
+                            (t
+                             `(:multi-colored
+                               (:white ,(format nil "~6A " action))
+                               (:yellow ,short-hash)
+                               (:white ,(format nil " ~A" msg))))))))))
+
 (defun update-main-content (view)
   "Update main panel based on focused panel and selection"
   (let* ((focused-idx (view-focused-panel view))
@@ -467,9 +512,9 @@
        ("c" . "commit") ("r" . "refresh") ("q" . "quit")))
     (2 ; Branches panel
      '(("j/k" . "navigate") ("Enter" . "checkout/track") ("n" . "new") ("f" . "fetch")
-       ("w" . "local/remote") ("M" . "merge") ("D" . "delete") ("r" . "refresh") ("q" . "quit")))
+       ("w" . "local/remote") ("M" . "merge") ("R" . "rebase") ("D" . "delete") ("r" . "refresh") ("q" . "quit")))
     (3 ; Commits panel
-     '(("j/k" . "navigate") ("S" . "squash") ("C" . "cherry-pick") ("R" . "revert") ("r" . "refresh") ("q" . "quit")))
+     '(("j/k" . "navigate") ("i" . "rebase") ("S" . "squash") ("C" . "cherry-pick") ("R" . "revert") ("r" . "refresh") ("q" . "quit")))
     (4 ; Stash panel
      '(("j/k" . "navigate") ("s" . "stash") ("g" . "pop") ("r" . "refresh") ("q" . "quit")))
     (t ; Default
@@ -614,11 +659,13 @@
                        "   S          Squash commits"
                        "   C          Cherry-pick commit"
                        "   R          Revert commit"
+                       "   i          Interactive rebase (select range)"
                        ""
                        " BRANCHES (panel 3)"
                        "   n          New branch"
                        "   Enter      Checkout branch"
                        "   M          Merge branch into current"
+                       "   R          Rebase current onto branch"
                        "   D          Delete branch/tag/remote branch"
                        "   C          Cherry-pick from branch"
                        "   w          Cycle: Local/Remotes/Tags/Submodules"
@@ -1184,6 +1231,39 @@
                 (when (string= selected-button "Pop")
                   (log-command view (format nil "git stash pop stash@{~D}" idx))
                   (git-stash-pop idx)
+                  (refresh-data view))))
+             ;; Reword Commit dialog (in rebase mode)
+             ((string= (dialog-title dlg) "Reword Commit")
+              (let ((new-msg (first (dialog-input-lines dlg)))
+                    (idx (getf (dialog-data dlg) :rebase-index)))
+                (when (and new-msg (> (length new-msg) 0) idx)
+                  (let ((entry (nth idx (rebase-entries view))))
+                    (when entry
+                      (setf (rebase-action entry) :reword)
+                      (setf (rebase-new-message entry) new-msg)
+                      (update-rebase-display view))))))
+             ;; Execute Rebase dialog
+             ((string= (dialog-title dlg) "Execute Rebase")
+              (when (getf (dialog-data dlg) :rebase-execute)
+                (let ((entries (rebase-entries view))
+                      (base (rebase-base-commit view)))
+                  (when (and entries base)
+                    (log-command view (format nil "git rebase -i ~A" base))
+                    (let ((result (git-rebase-interactive entries base)))
+                      (declare (ignore result))
+                      ;; Exit rebase mode
+                      (setf (rebase-mode view) nil)
+                      (setf (rebase-entries view) nil)
+                      (setf (rebase-base-commit view) nil)
+                      (setf (panel-title (commits-panel view))
+                            (numbered-title 4 "Commits" '("Reflog")))
+                      (refresh-data view))))))
+             ;; Rebase Branch dialog
+             ((string= (dialog-title dlg) "Rebase Branch")
+              (let ((branch (getf (dialog-data dlg) :branch)))
+                (when branch
+                  (log-command view (format nil "git rebase ~A" branch))
+                  (git-rebase-onto branch)
                   (refresh-data view))))))
          (setf (active-dialog view) nil))
         ((eq result :cancel)
@@ -1418,6 +1498,81 @@
            (and (key-event-char key) (char= (key-event-char key) #\k)))
        (panel-select-prev (main-panel view))
        (return-from handle-key nil))))
+
+  ;; Interactive rebase mode key handling
+  (when (rebase-mode view)
+    (let ((entries (rebase-entries view))
+          (selected (panel-selected (commits-panel view))))
+      (cond
+        ;; Quit rebase mode without executing
+        ((or (and (key-event-char key) (char= (key-event-char key) #\q))
+             (eq (key-event-code key) +key-escape+))
+         (setf (rebase-mode view) nil)
+         (setf (rebase-entries view) nil)
+         (setf (rebase-base-commit view) nil)
+         (setf (panel-title (commits-panel view))
+               (numbered-title 4 "Commits" '("Reflog")))
+         (refresh-data view))
+        ;; Navigate
+        ((or (eq (key-event-code key) +key-down+)
+             (and (key-event-char key) (char= (key-event-char key) #\j)))
+         (panel-select-next (commits-panel view)))
+        ((or (eq (key-event-code key) +key-up+)
+             (and (key-event-char key) (char= (key-event-char key) #\k)))
+         (panel-select-prev (commits-panel view)))
+        ;; Mark as pick
+        ((and (key-event-char key) (char= (key-event-char key) #\p))
+         (when (and entries (< selected (length entries)))
+           (setf (rebase-action (nth selected entries)) :pick)
+           (update-rebase-display view)))
+        ;; Mark as reword
+        ((and (key-event-char key) (char= (key-event-char key) #\r))
+         (when (and entries (< selected (length entries)))
+           (let ((entry (nth selected entries)))
+             (setf (active-dialog view)
+                   (make-dialog :title "Reword Commit"
+                                :message (format nil "New message for ~A:"
+                                                 (rebase-short-hash entry))
+                                :input-mode t
+                                :data (list :rebase-index selected
+                                            :old-message (rebase-message entry))
+                                :buttons '("Reword" "Cancel"))))))
+        ;; Mark as squash
+        ((and (key-event-char key) (char= (key-event-char key) #\s))
+         (when (and entries (< selected (length entries)) (> selected 0))
+           (setf (rebase-action (nth selected entries)) :squash)
+           (update-rebase-display view)))
+        ;; Mark as fixup
+        ((and (key-event-char key) (char= (key-event-char key) #\f))
+         (when (and entries (< selected (length entries)) (> selected 0))
+           (setf (rebase-action (nth selected entries)) :fixup)
+           (update-rebase-display view)))
+        ;; Mark as drop
+        ((and (key-event-char key) (char= (key-event-char key) #\d))
+         (when (and entries (< selected (length entries)))
+           (setf (rebase-action (nth selected entries)) :drop)
+           (update-rebase-display view)))
+        ;; Move commit down in order
+        ((and (key-event-char key) (char= (key-event-char key) #\J))
+         (when (and entries (< selected (1- (length entries))))
+           (rotatef (nth selected entries) (nth (1+ selected) entries))
+           (panel-select-next (commits-panel view))
+           (update-rebase-display view)))
+        ;; Move commit up in order
+        ((and (key-event-char key) (char= (key-event-char key) #\K))
+         (when (and entries (> selected 0))
+           (rotatef (nth selected entries) (nth (1- selected) entries))
+           (panel-select-prev (commits-panel view))
+           (update-rebase-display view)))
+        ;; Execute rebase
+        ((eq (key-event-code key) +key-enter+)
+         (setf (active-dialog view)
+               (make-dialog :title "Execute Rebase"
+                            :message (format nil "Execute interactive rebase on ~D commits?"
+                                             (length entries))
+                            :data (list :rebase-execute t)
+                            :buttons '("Execute" "Cancel"))))))
+    (return-from handle-key nil))
   
   (let* ((focused-idx (view-focused-panel view))
          (panel (nth focused-idx (view-panels view))))
@@ -1885,6 +2040,22 @@
                  (setf (dialog-message (active-dialog view))
                        (format nil "~A|~A" branch (current-branch view))))))))
        nil)
+      ;; Rebase onto - 'R' (capital, when on branches panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\R))
+       (when (and (= focused-idx 2) (not (show-remote-branches view))
+                  (not (show-tags view)) (not (show-submodules view)))
+         (let* ((branches (branch-list view))
+                (selected (panel-selected panel)))
+           (when (and branches (< selected (length branches)))
+             (let ((branch (nth selected branches)))
+               (unless (string= branch (current-branch view))
+                 (setf (active-dialog view)
+                       (make-dialog :title "Rebase Branch"
+                                    :message (format nil "Rebase ~A onto ~A?"
+                                                     (current-branch view) branch)
+                                    :data (list :branch branch)
+                                    :buttons '("Rebase" "Cancel"))))))))
+       nil)
       ;; Update submodule - 'U' (capital, when on branches panel in submodules view)
       ((and (key-event-char key) (char= (key-event-char key) #\U))
        (when (and (= focused-idx 2) (show-submodules view))
@@ -2042,6 +2213,23 @@
                                   :message (format nil "Create fixup! commit for ~A?" short-hash)
                                   :data (list :hash hash)
                                   :buttons '("Fixup" "Cancel")))))))
+       nil)
+      ;; Interactive rebase - 'i' (when on commits panel)
+      ((and (key-event-char key) (char= (key-event-char key) #\i))
+       (when (= focused-idx 3)  ; Commits panel
+         (let ((selected (panel-selected panel)))
+           (when (> selected 0)  ; Need at least 2 commits
+             (let* ((count (1+ selected))
+                    (base-commit (format nil "HEAD~~~D" count))
+                    (entries (git-rebase-todo-list base-commit)))
+               (when entries
+                 (setf (rebase-mode view) t)
+                 (setf (rebase-entries view) entries)
+                 (setf (rebase-base-commit view) base-commit)
+                 (setf (panel-title (commits-panel view))
+                       "[4] Interactive Rebase  p:pick r:reword s:squash f:fixup d:drop J/K:move Enter:go q:cancel")
+                 (setf (panel-selected (commits-panel view)) 0)
+                 (update-rebase-display view))))))
        nil)
       ;; Search commits - '/' (when on commits panel)
       ((and (key-event-char key) (char= (key-event-char key) #\/))

@@ -7,9 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Interactive rebase** — Press `i` on commits panel to enter rebase mode
+  - Select a commit to define the range (HEAD to selected)
+  - `p` pick, `r` reword, `s` squash, `f` fixup, `d` drop
+  - `J`/`K` to reorder commits
+  - `Enter` to execute, `q` to cancel
+  - Color-coded display for each action type
+- **Rebase branch** — Press `R` on branches panel to rebase current branch onto selected branch
+- **ROADMAP.md** — Feature roadmap tracking implemented and planned features
+
 ### Fixed
 
 - **D key not working on branches panel** — Duplicate key handler made branch/tag/remote deletion unreachable; merged into single dispatcher
+- **Duplicate function definitions** — Removed old `git-stash-list` and `git-stash-pop` that were superseded by enhanced versions
 
 ## [0.13.0] - 2026-02-07
 

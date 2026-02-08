@@ -333,7 +333,22 @@
            #:git-stash-drop
            #:git-stash-clear
            #:git-stash-show
-           #:git-stash-branch))
+           #:git-stash-branch
+           ;; Interactive rebase
+           #:rebase-todo-entry
+           #:make-rebase-todo-entry
+           #:rebase-action
+           #:rebase-hash
+           #:rebase-short-hash
+           #:rebase-message
+           #:rebase-new-message
+           #:rebase-action-string
+           #:git-rebase-todo-list
+           #:git-rebase-interactive
+           #:git-rebase-abort
+           #:git-rebase-continue
+           #:git-rebase-skip
+           #:git-rebase-onto))
 
 (defpackage #:gilt.pty
   (:use #:cl)

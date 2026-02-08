@@ -559,6 +559,145 @@
   "Revert a commit"
   (git-run "revert" "--no-edit" commit-hash))
 
+;;; Interactive Rebase
+
+(defclass rebase-todo-entry ()
+  ((action :initarg :action :accessor rebase-action :initform :pick
+           :documentation "One of :pick, :reword, :squash, :fixup, :drop")
+   (hash :initarg :hash :accessor rebase-hash :initform nil)
+   (short-hash :initarg :short-hash :accessor rebase-short-hash :initform nil)
+   (message :initarg :message :accessor rebase-message :initform nil)
+   (new-message :initarg :new-message :accessor rebase-new-message :initform nil
+                :documentation "New message for :reword action"))
+  (:documentation "Represents a single entry in an interactive rebase todo list"))
+
+(defun make-rebase-todo-entry (&key (action :pick) hash short-hash message)
+  (make-instance 'rebase-todo-entry :action action :hash hash
+                 :short-hash short-hash :message message))
+
+(defmethod print-object ((entry rebase-todo-entry) stream)
+  (print-unreadable-object (entry stream :type t)
+    (format stream "~A ~A ~A" (rebase-action entry) 
+            (rebase-short-hash entry) (rebase-message entry))))
+
+(defun git-rebase-todo-list (base-commit)
+  "Get list of rebase-todo-entry objects for commits from BASE-COMMIT to HEAD.
+   BASE-COMMIT is typically a hash like HEAD~N or a branch name."
+  (let ((lines (git-run-lines "log" "--reverse" "--pretty=format:%H|%h|%s"
+                              (format nil "~A..HEAD" base-commit))))
+    (loop for line in lines
+          for parts = (cl-ppcre:split "\\|" line :limit 3)
+          when (= (length parts) 3)
+          collect (make-rebase-todo-entry
+                   :action :pick
+                   :hash (first parts)
+                   :short-hash (second parts)
+                   :message (third parts)))))
+
+(defun rebase-action-string (action)
+  "Convert rebase action keyword to git rebase todo string."
+  (case action
+    (:pick "pick")
+    (:reword "reword")
+    (:squash "squash")
+    (:fixup "fixup")
+    (:drop "drop")
+    (t "pick")))
+
+(defun write-rebase-todo-file (entries path)
+  "Write rebase todo entries to a file in git rebase -i format."
+  (with-open-file (out path :direction :output :if-exists :supersede)
+    (dolist (entry entries)
+      (unless (eq (rebase-action entry) :drop)
+        (format out "~A ~A ~A~%"
+                (rebase-action-string (rebase-action entry))
+                (rebase-short-hash entry)
+                (if (and (eq (rebase-action entry) :reword)
+                         (rebase-new-message entry))
+                    (rebase-message entry)
+                    (rebase-message entry)))))))
+
+(defun repo-path-dir (repo)
+  "Get repo path as a directory pathname (with trailing slash)."
+  (let ((path (repo-path repo)))
+    (if (char= (char path (1- (length path))) #\/)
+        (pathname path)
+        (pathname (concatenate 'string path "/")))))
+
+(defun git-rebase-interactive (entries base-commit)
+  "Execute an interactive rebase using the given todo ENTRIES.
+   Uses GIT_SEQUENCE_EDITOR to inject our todo list.
+   For :reword entries with new-message, creates a helper script."
+  (let* ((repo (ensure-repo))
+         (repo-dir (repo-path-dir repo))
+         (todo-file (merge-pathnames ".gilt-rebase-todo" repo-dir))
+         (reword-entries (remove-if-not (lambda (e) 
+                                          (and (eq (rebase-action e) :reword)
+                                               (rebase-new-message e)))
+                                        entries))
+         (editor-script (merge-pathnames ".gilt-rebase-editor" repo-dir)))
+    ;; Write the todo file
+    (write-rebase-todo-file entries todo-file)
+    ;; Create the sequence editor script that copies our todo file
+    (with-open-file (out editor-script :direction :output :if-exists :supersede)
+      (format out "#!/bin/sh~%cp '~A' \"$1\"~%" (namestring todo-file)))
+    ;; Make it executable
+    (sb-ext:run-program "/bin/chmod" (list "+x" (namestring editor-script))
+                        :output nil :error nil)
+    ;; Build environment: inherit current env + add our vars
+    (let* ((has-squash-or-fixup (some (lambda (e) (member (rebase-action e) '(:squash :fixup)))
+                                      entries))
+           (msg-script (merge-pathnames ".gilt-rebase-msg-editor" repo-dir))
+           (env (append (sb-ext:posix-environ)
+                        (list (format nil "GIT_SEQUENCE_EDITOR=~A" (namestring editor-script))))))
+      ;; For squash/fixup: GIT_EDITOR must accept the combined message automatically
+      ;; For reword: GIT_EDITOR writes the new message
+      ;; If neither, use "true" as a no-op editor
+      (cond
+        (reword-entries
+         (with-open-file (out msg-script :direction :output :if-exists :supersede)
+           (format out "#!/bin/sh~%")
+           (format out "echo '~A' > \"$1\"~%"
+                   (rebase-new-message (first reword-entries))))
+         (sb-ext:run-program "/bin/chmod" (list "+x" (namestring msg-script))
+                             :output nil :error nil)
+         (push (format nil "GIT_EDITOR=~A" (namestring msg-script)) env))
+        (has-squash-or-fixup
+         ;; Use "true" to auto-accept the combined commit message
+         (push "GIT_EDITOR=true" env))
+        (t
+         ;; No editor needed, but set one just in case
+         (push "GIT_EDITOR=true" env)))
+      ;; Run the rebase
+      (let ((result
+              (with-output-to-string (s)
+                (sb-ext:run-program "/usr/bin/git" 
+                                    (list "rebase" "-i" base-commit)
+                                    :output s :error s
+                                    :environment env
+                                    :directory (repo-path repo)))))
+        ;; Clean up temp files
+        (ignore-errors (delete-file todo-file))
+        (ignore-errors (delete-file editor-script))
+        (ignore-errors (delete-file msg-script))
+        result))))
+
+(defun git-rebase-abort ()
+  "Abort an in-progress rebase."
+  (git-run "rebase" "--abort"))
+
+(defun git-rebase-continue ()
+  "Continue a rebase after resolving conflicts."
+  (git-run "rebase" "--continue"))
+
+(defun git-rebase-skip ()
+  "Skip the current commit during a rebase."
+  (git-run "rebase" "--skip"))
+
+(defun git-rebase-onto (branch)
+  "Rebase current branch onto BRANCH."
+  (git-run "rebase" branch))
+
 ;;; Branches
 
 (defun git-checkout (branch)
@@ -645,14 +784,6 @@
 (defun git-stash ()
   "Stash current changes"
   (git-run "stash"))
-
-(defun git-stash-pop ()
-  "Pop the last stash"
-  (git-run "stash" "pop"))
-
-(defun git-stash-list ()
-  "List stashes"
-  (git-run-lines "stash" "list"))
 
 ;;; Push/Pull/Fetch
 

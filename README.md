@@ -11,7 +11,8 @@ A LazyGit-style Git TUI written in Common Lisp.
 - **Full color diffs** - 256-color support with syntax highlighting
 - **Fast and responsive** - Lightweight terminal interface
 - **CLOS architecture** - Clean, extensible object-oriented design
-- **Comprehensive Git operations** - Stage, commit, push, pull, merge, cherry-pick, and more
+- **Comprehensive Git operations** - Stage, commit, push, pull, merge, rebase, cherry-pick, and more
+- **Interactive rebase** - Full rebase UI with pick, reword, squash, fixup, drop, and reorder
 - **Git blame view** - View file blame with commit info
 - **Commit search** - Filter commits by message or author
 - **Tag support** - Create, delete, and view tags
