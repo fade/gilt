@@ -13,14 +13,20 @@ A LazyGit-style Git TUI written in Common Lisp.
 - **CLOS architecture** - Clean, extensible object-oriented design
 - **Comprehensive Git operations** - Stage, commit, push, pull, merge, rebase, cherry-pick, and more
 - **Interactive rebase** - Full rebase UI with pick, reword, squash, fixup, drop, and reorder
+- **Bisect** - Binary search for bad commits with `b`:bad `g`:good `Q`:reset
 - **Git blame view** - View file blame with commit info
 - **Commit search** - Filter commits by message or author
-- **Tag support** - Create, delete, and view tags
-- **Remote management** - Add, rename remotes; delete remote branches
+- **Tag support** - Create, delete, push, and view tags
+- **Remote management** - Add, rename remotes; delete remote branches; fetch
 - **Submodule support** - View and update submodules
 - **Worktree management** - View, add, and remove working directories
-- **Stash management** - List, apply, pop, and drop stashes
+- **Stash management** - List, apply, pop, drop, and rename stashes
 - **Config viewer** - Browse git config (local/global/system)
+- **Git-flow integration** - Feature, release, and hotfix workflows
+- **Merge conflict resolution** - Resolve with ours/theirs/edit, abort merge
+- **Force push** - Push with `--force-with-lease` option
+- **Context-sensitive hints** - Help bar updates based on active panel and view
+- **Custom keybindings** - Define shell commands in `~/.config/gilt/commands.conf`
 - **Status bar** - Branch tracking info and operation status
 - **Cross-platform Unix support** - Works on NixOS, standard Linux, macOS, WSL2
 

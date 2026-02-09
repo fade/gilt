@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-02-09
+
 ### Added
 
 - **Interactive rebase** — Press `i` on commits panel to enter rebase mode
@@ -48,10 +50,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Git-flow integration** — Press `E` for git-flow menu (feature/release/hotfix)
 - **Custom command keybindings** — Define in `~/.config/gilt/commands.conf` (key=command)
 - **Custom patch building** — `git apply --cached` support for building patches
+- **Force push** — Push dialog now includes Force Push (with lease) option
+- **Context-sensitive hints bar** — Branches panel hints change for Local/Remotes/Tags/Submodules views
 - **ROADMAP.md** — Feature roadmap tracking implemented and planned features
 
 ### Fixed
 
+- **ESC key not working** — Fixed escape key handling for closing overlays and dialogs
+- **Arrow keys not working** — Fixed arrow key input handling across all panels
+- **`w` key cycling wrong panel** — Fixed `w` to cycle Files/Worktrees/Stashes on files panel (was on commits panel)
+- **Staged files not visually distinct** — Staged files now display in green
+- **Key handlers consuming keys for wrong panels** — Systematic fix of panel guards on all key handlers to prevent keys from being swallowed by the wrong panel's handler
+- **`x` (difftool) crash** — Fixed undefined function error for alternate screen functions
+- **Browser URL wrong for SSH host aliases** — Resolves SSH host aliases (e.g., `github-parenworks` → `github.com`) via `~/.ssh/config`
+- **`X`, `F`, `C`, `R` not working on commits panel** — Earlier handlers for other panels were consuming these keys
+- **`g` (bisect good) not working** — Stash pop handler was consuming the key on commits panel
+- **`o` (resolve conflict ours) not working** — Merged conflict resolution and open-in-browser into single context-sensitive handler
+- **`A` (add remote) not working in remotes view** — Add Worktree handler lacked panel guard
+- **`R` (rename remote) not working in remotes view** — Rebase handler consumed key in remotes view
+- **Git Flow dialog buttons overflow** — Dialog width now accounts for total button width
+- **Screen resize (`+`) crash** — Fixed `UNSIGNED-BYTE -1` error from negative dimensions in draw functions
+- **Copy file path only copying filename** — Now copies full path (repo root + relative path)
+- **Shell command output staggered** — Multi-line output now split into individual log lines
 - **D key not working on branches panel** — Duplicate key handler made branch/tag/remote deletion unreachable; merged into single dispatcher
 - **Duplicate function definitions** — Removed old `git-stash-list` and `git-stash-pop` that were superseded by enhanced versions
 
@@ -182,7 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Branch tracking info (ahead/behind upstream)
   - Repository state indicator (MERGING, REBASING, etc.)
 
-[Unreleased]: https://github.com/parenworks/gilt/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/parenworks/gilt/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/parenworks/gilt/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/parenworks/gilt/releases/tag/v0.13.0
 [0.12.0]: https://github.com/parenworks/gilt/releases/tag/v0.12.0
 [0.11.0]: https://github.com/parenworks/gilt/releases/tag/v0.11.0

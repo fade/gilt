@@ -218,6 +218,7 @@ Press `w` three times from Local branches to reach Submodules view.
 |-----|--------|
 | `s` | Create new stash |
 | `g` | Pop (apply and remove) top stash |
+| `D` (capital) | Drop selected stash |
 
 ### Config Viewer
 
@@ -401,6 +402,19 @@ Temporarily save your changes:
 1. Press `P` (capital) from any panel to push
 2. Press `p` (lowercase) from any panel to pull
 3. A status indicator shows "Pushing..." or "Pulling..." during the operation
+4. The push dialog includes a **Force Push** option (uses `--force-with-lease` for safety)
+
+### Bisecting (Finding Bad Commits)
+
+Use binary search to find which commit introduced a bug:
+
+1. Navigate to the **Commits panel** (`Tab` or press `4`)
+2. Press `b` to start bisect — marks the selected commit as **bad**
+3. Navigate to a known good commit and press `g` to mark it as **good**
+4. Git will checkout a commit halfway between good and bad
+5. Test the code, then press `b` (bad) or `g` (good) to continue narrowing
+6. Repeat until git identifies the first bad commit
+7. Press `Q` (capital) to reset bisect and return to normal mode
 
 ### Working with Remote Branches
 
@@ -472,7 +486,7 @@ Gilt works on various Unix systems including NixOS, standard Linux distributions
 |----------|-------------|----------|
 | `GILT_ESCAPE_TIMEOUT` | Escape sequence timeout (seconds) | `0.01` |
 
-Since v0.13.0, Gilt uses FFI-based terminal control (POSIX termios) and no longer depends on `stty` or any external terminal utilities.
+Since v0.13.0, Gilt uses FFI-based terminal control (POSIX termios) and no longer depends on `stty` or any external terminal utilities. As of v0.14.0, all key handlers have been thoroughly tested and the hints bar is context-sensitive.
 
 ### Diagnostics
 
