@@ -1979,6 +1979,42 @@
                             :buttons '("Execute" "Cancel"))))))
     (return-from handle-key nil))
   
+  ;; Handle mouse click - map to panel focus and item selection
+  (when (eq (key-event-code key) +key-mouse+)
+    (let ((mx (key-event-ctrl-p key))   ; column (1-based)
+          (my (key-event-alt-p key)))    ; row (1-based)
+      ;; Find which panel was clicked
+      (loop for p in (view-panels view)
+            for i from 0
+            when (and (> (panel-width p) 0) (> (panel-height p) 0)
+                      (>= mx (panel-x p)) (< mx (+ (panel-x p) (panel-width p)))
+                      (>= my (panel-y p)) (< my (+ (panel-y p) (panel-height p))))
+            do (progn
+                 ;; Focus this panel
+                 (setf (view-focused-panel view) i)
+                 (loop for pp in (view-panels view)
+                       for j from 0
+                       do (setf (panel-focused pp) (= j i)))
+                 (setf (panel-focused (main-panel view)) nil)
+                 ;; Select the clicked item (row within panel content area)
+                 (let ((item-row (- my (panel-y p) 1)))  ; subtract top border
+                   (when (and (>= item-row 0) (< item-row (length (panel-items p))))
+                     (setf (panel-selected p) item-row)))
+                 (update-main-content view)
+                 (return)))
+      ;; Check if main panel was clicked
+      (let ((mp (main-panel view)))
+        (when (and (> (panel-width mp) 0) (> (panel-height mp) 0)
+                   (>= mx (panel-x mp)) (< mx (+ (panel-x mp) (panel-width mp)))
+                   (>= my (panel-y mp)) (< my (+ (panel-y mp) (panel-height mp))))
+          (setf (panel-focused mp) t)
+          (loop for pp in (view-panels view)
+                do (setf (panel-focused pp) nil))
+          (let ((item-row (- my (panel-y mp) 1)))
+            (when (and (>= item-row 0) (< item-row (length (panel-items mp))))
+              (setf (panel-selected mp) item-row))))))
+    (return-from handle-key nil))
+
   (let* ((focused-idx (view-focused-panel view))
          (panel (nth focused-idx (view-panels view))))
     (cond

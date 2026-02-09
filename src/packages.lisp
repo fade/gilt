@@ -118,9 +118,12 @@
             #:+key-end+
             #:+key-page-up+
             #:+key-page-down+
+            #:+key-mouse+
             ;; Screen buffer
             #:enter-alternate-screen
-            #:leave-alternate-screen))
+            #:leave-alternate-screen
+            #:enable-mouse-tracking
+            #:disable-mouse-tracking))
 
 (defpackage #:gilt.ui
   (:use #:cl #:gilt.ansi #:gilt.terminal)

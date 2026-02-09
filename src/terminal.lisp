@@ -41,6 +41,7 @@
 (defconstant +key-end+ :end)
 (defconstant +key-page-up+ :page-up)
 (defconstant +key-page-down+ :page-down)
+(defconstant +key-mouse+ :mouse)
 
 ;;; Environment configuration (must be defined before methods that use them)
 
@@ -164,15 +165,27 @@
   (format t "~C[?1049l" *escape*)
   (force-output))
 
+(defun enable-mouse-tracking ()
+  "Enable mouse tracking (normal mode + UTF-8 extended coordinates)"
+  (format t "~C[?1000h~C[?1002h~C[?1015h~C[?1006h" *escape* *escape* *escape* *escape*)
+  (force-output))
+
+(defun disable-mouse-tracking ()
+  "Disable mouse tracking"
+  (format t "~C[?1006l~C[?1015l~C[?1002l~C[?1000l" *escape* *escape* *escape* *escape*)
+  (force-output))
+
 (defmacro with-raw-terminal (&body body)
   "Execute body with terminal in raw mode, ensuring cleanup"
   `(progn
      (enter-alternate-screen)
      (enable-raw-mode *terminal-mode*)
+     (enable-mouse-tracking)
      (cursor-hide)
      (unwind-protect
           (progn ,@body)
        (close-tty-stream)
+       (disable-mouse-tracking)
        (cursor-show)
        (disable-raw-mode *terminal-mode*)
        (leave-alternate-screen)
@@ -281,32 +294,74 @@
             (make-key-event :code +key-escape+))
            ((= next 91)
             ;; CSI sequence: ESC [
-            (let ((params nil)
-                  (final-byte nil))
-              (loop
-                (setf final-byte (read-byte-from-fd fd))
-                (unless final-byte (return))
-                (cond
-                  ((and (>= final-byte 48) (<= final-byte 57))
-                   (push (code-char final-byte) params))
-                  ((= final-byte 59)
-                   (push #\; params))
-                  (t (return))))
-              (let ((param-str (coerce (nreverse params) 'string)))
-                (case final-byte
-                  (65 (make-key-event :code +key-up+))
-                  (66 (make-key-event :code +key-down+))
-                  (67 (make-key-event :code +key-right+))
-                  (68 (make-key-event :code +key-left+))
-                  (72 (make-key-event :code +key-home+))
-                  (70 (make-key-event :code +key-end+))
-                  (126
-                   (cond
-                     ((string= param-str "3") (make-key-event :code +key-delete+))
-                     ((string= param-str "5") (make-key-event :code +key-page-up+))
-                     ((string= param-str "6") (make-key-event :code +key-page-down+))
-                     (t (make-key-event :code :unknown))))
-                  (t (make-key-event :code :unknown))))))
+            (let ((first-byte (or (read-byte-from-fd fd)
+                                  ;; Retry with small delay for non-blocking fd
+                                  (progn (sleep 0.001) (read-byte-from-fd fd)))))
+              (unless first-byte
+                (return-from read-key-event (make-key-event :code :unknown)))
+              (cond
+                ;; SGR mouse: ESC [ < Cb ; Cx ; Cy M/m
+                ((= first-byte 60)
+                 (let ((mouse-params nil)
+                       (mouse-final nil))
+                   (loop for attempts from 0 below 100 do
+                     (let ((b (read-byte-from-fd fd)))
+                       (cond
+                         (b (cond
+                              ((or (and (>= b 48) (<= b 57)) (= b 59))
+                               (push (code-char b) mouse-params))
+                              (t (setf mouse-final b) (return))))
+                         (t (sleep 0.001)))))  ; wait for bytes on non-blocking fd
+                   (let* ((param-str (coerce (nreverse mouse-params) 'string))
+                          (parts (cl-ppcre:split ";" param-str))
+                          (cb (if (first parts) (parse-integer (first parts) :junk-allowed t) 0))
+                          (cx (if (second parts) (parse-integer (second parts) :junk-allowed t) 0))
+                          (cy (if (third parts) (parse-integer (third parts) :junk-allowed t) 0))
+                          (release-p (and mouse-final (= mouse-final 109))))  ; 'm' = release
+                     (declare (ignore release-p))
+                     (cond
+                       ;; Scroll up (button 64)
+                       ((= cb 64) (make-key-event :code +key-up+))
+                       ;; Scroll down (button 65)
+                       ((= cb 65) (make-key-event :code +key-down+))
+                       ;; Any click press (M=77) - pass coordinates
+                       ((and mouse-final (= mouse-final 77))
+                        (make-key-event :code +key-mouse+ :char (code-char cb)
+                                        :ctrl-p cx :alt-p cy))
+                       ;; Ignore release events (m=109) and others
+                       (t nil)))))
+                ;; Normal CSI sequence
+                (t
+                 (let ((params (list (code-char first-byte)))
+                       (final-byte nil))
+                   ;; If first-byte is already a final byte (letter), use it directly
+                   (if (and (>= first-byte 64) (<= first-byte 126))
+                       (setf final-byte first-byte)
+                       ;; Otherwise continue reading params
+                       (loop
+                         (let ((b (read-byte-from-fd fd)))
+                           (unless b (return))
+                           (cond
+                             ((and (>= b 48) (<= b 57))
+                              (push (code-char b) params))
+                             ((= b 59)
+                              (push #\; params))
+                             (t (setf final-byte b) (return))))))
+                   (let ((param-str (coerce (nreverse params) 'string)))
+                     (case final-byte
+                       (65 (make-key-event :code +key-up+))
+                       (66 (make-key-event :code +key-down+))
+                       (67 (make-key-event :code +key-right+))
+                       (68 (make-key-event :code +key-left+))
+                       (72 (make-key-event :code +key-home+))
+                       (70 (make-key-event :code +key-end+))
+                       (126
+                        (cond
+                          ((string= param-str "3") (make-key-event :code +key-delete+))
+                          ((string= param-str "5") (make-key-event :code +key-page-up+))
+                          ((string= param-str "6") (make-key-event :code +key-page-down+))
+                          (t (make-key-event :code :unknown))))
+                       (t (make-key-event :code :unknown)))))))))
            (t
             ;; Alt + key
             (make-key-event :char (code-char next) :alt-p t)))))
