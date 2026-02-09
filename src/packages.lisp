@@ -363,6 +363,7 @@
            #:blame-line-num
            #:blame-line-content
            #:ensure-repo
+           #:repo-path-dir
            #:*current-repo*
            ;; Stash management
            #:stash-entry

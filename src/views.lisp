@@ -1457,7 +1457,8 @@
                   (log-command view (format nil "$ ~A" cmd))
                   (let ((output (git-shell-command cmd)))
                     (when (and output (> (length output) 0))
-                      (log-command view (string-trim '(#\Newline) output)))
+                      (dolist (line (cl-ppcre:split "\\n" (string-trim '(#\Newline #\Return) output)))
+                        (log-command view line)))
                     (refresh-data view)))))
              ;; Filter Files dialog
              ((string= (dialog-title dlg) "Filter Files")
@@ -2283,12 +2284,15 @@
        (let ((text nil)
              (what nil))
          (cond
-           ;; Files panel - copy file path
+           ;; Files panel - copy full file path
            ((= focused-idx 1)
             (let* ((entries (status-entries view))
                    (selected (panel-selected panel)))
               (when (and entries (< selected (length entries)))
-                (setf text (status-entry-file (nth selected entries)))
+                (let* ((repo (gilt.git:ensure-repo))
+                       (dir (namestring (gilt.git:repo-path-dir repo)))
+                       (file (status-entry-file (nth selected entries))))
+                  (setf text (concatenate 'string dir file)))
                 (setf what "file path"))))
            ;; Branches panel - copy branch name
            ((= focused-idx 2)
@@ -3127,7 +3131,8 @@
                            (output (git-shell-command cmd)))
                       (log-command view (format nil "$ ~A" cmd))
                       (when (and output (> (length output) 0))
-                        (log-command view (string-trim '(#\Newline) output)))
+                        (dolist (line (cl-ppcre:split "\\n" (string-trim '(#\Newline #\Return) output)))
+                          (log-command view line)))
                       (refresh-data view)
                       t))))))
        nil)
