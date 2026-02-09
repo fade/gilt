@@ -508,7 +508,11 @@
          (fg (color-code :bright-white))
          (write-string display-buf *terminal-io*)
          (fg (color-code :bright-cyan))
-         (write-char #\▌ *terminal-io*))
+         (write-char #\▌ *terminal-io*)
+         ;; Pad remaining space to clear old characters
+         (bg (color-code 236))
+         (let ((padding (max 0 (- input-width (length display-buf) 1))))
+           (loop repeat padding do (write-char #\Space *terminal-io*))))
        ;; Position right border explicitly
        (cursor-to (1+ y) (+ x w -1))
        (fg (color-code :bright-cyan))

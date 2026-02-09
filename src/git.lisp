@@ -310,6 +310,16 @@
                      :date (fourth parts)
                      :message (fifth parts)))))
 
+(defun git-log-graph (&key (count 50) all)
+  "Get commit graph as list of strings. If ALL is true, show all branches."
+  (if all
+      (git-run-lines "log" (format nil "-~D" count)
+                     "--graph" "--oneline" "--decorate"
+                     "--color=always" "--all")
+      (git-run-lines "log" (format nil "-~D" count)
+                     "--graph" "--oneline" "--decorate"
+                     "--color=always")))
+
 (defun git-log-branch-only (branch &key (count 50))
   "Get commits that are in BRANCH but not in current branch (for cherry-picking)"
   (let* ((current (git-current-branch))
@@ -1271,8 +1281,9 @@
       (git-run "stash" "push" "--include-untracked")))
 
 (defun git-stash-push-files (files &optional message)
-  "Stash specific FILES (list of file paths) with optional message."
-  (let ((args (list "stash" "push")))
+  "Stash specific FILES (list of file paths) with optional message.
+   Includes untracked files so new files can also be stashed."
+  (let ((args (list "stash" "push" "--include-untracked")))
     (when message
       (setf args (append args (list "-m" message))))
     (setf args (append args (list "--") files))

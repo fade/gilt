@@ -198,6 +198,7 @@
            #:git-diff
            #:git-diff-staged
            #:git-log
+           #:git-log-graph
            #:git-log-search
            #:git-log-branch-only
            #:git-branches

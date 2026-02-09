@@ -128,7 +128,9 @@
    ;; Range select
    (range-select-start :accessor range-select-start :initform nil)
    ;; Screen mode
-   (screen-mode :accessor screen-mode :initform :normal)))
+   (screen-mode :accessor screen-mode :initform :normal)
+   ;; Graph mode for commits
+   (graph-mode :accessor graph-mode :initform nil)))
 
 (defmethod initialize-instance :after ((view main-view) &key)
   ;; Create all panels
@@ -556,24 +558,45 @@
                 (setf (panel-title (main-panel view)) "[0] Diff")
                 (setf (panel-items (main-panel view))
                       (format-diff-lines diff))))))))
-      ;; Commits panel focused - show commit details with full message
+      ;; Commits panel focused - show commit details or graph
       ((= focused-idx 3)
-       (let ((commits (commit-list view)))
-         (when (and commits (< selected (length commits)))
-           (let* ((commit (nth selected commits))
-                  (full-message (git-commit-message (log-entry-hash commit)))
-                  (message-lines (cl-ppcre:split "\\n" (string-trim '(#\Newline #\Space) full-message))))
-             (setf (panel-title (main-panel view)) "[0] Commit")
+       (if (graph-mode view)
+           ;; Graph mode - show commit graph
+           (let ((graph-lines (git-log-graph :count 100 :all t)))
+             (setf (panel-title (main-panel view)) "[0] Graph (all branches)")
              (setf (panel-items (main-panel view))
-                   (append (list (format nil "Hash: ~A" (log-entry-hash commit))
-                                 (format nil "Author: ~A" (log-entry-author commit))
-                                 (format nil "Date: ~A" (log-entry-date commit))
-                                 "")
-                           message-lines))))))
+                   (or graph-lines (list "No commits"))))
+           ;; Normal mode - show commit details
+           (let ((commits (commit-list view)))
+             (when (and commits (< selected (length commits)))
+               (let* ((commit (nth selected commits))
+                      (full-message (git-commit-message (log-entry-hash commit)))
+                      (message-lines (cl-ppcre:split "\\n" (string-trim '(#\Newline #\Space) full-message))))
+                 (setf (panel-title (main-panel view)) "[0] Commit")
+                 (setf (panel-items (main-panel view))
+                       (append (list (format nil "Hash: ~A" (log-entry-hash commit))
+                                     (format nil "Author: ~A" (log-entry-author commit))
+                                     (format nil "Date: ~A" (log-entry-date commit))
+                                     "")
+                               message-lines)))))))
       ;; Branches panel focused
       ((= focused-idx 2)
        (setf (panel-title (main-panel view)) "[0] Branch Info")
        (setf (panel-items (main-panel view)) nil))
+      ;; Stash panel focused - show stash diff
+      ((= focused-idx 4)
+       (let ((stashes (stash-list view)))
+         (if (and stashes (< selected (length stashes)))
+             (let* ((stash (nth selected stashes))
+                    (diff (ignore-errors (git-stash-show (stash-index stash)))))
+               (setf (panel-title (main-panel view)) "[0] Stash Diff")
+               (setf (panel-items (main-panel view))
+                     (if (and diff (> (length diff) 0))
+                         (format-diff-lines diff)
+                         (list "No diff available"))))
+             (progn
+               (setf (panel-title (main-panel view)) "[0] Stash")
+               (setf (panel-items (main-panel view)) (list "No stashes"))))))
       ;; Default
       (t
        (setf (panel-title (main-panel view)) "[0] Main")
@@ -600,7 +623,7 @@
         '(("j/k" . "navigate") ("Enter" . "checkout") ("n" . "new") ("N" . "rename")
           ("w" . "local/remote") ("M" . "merge") ("R" . "rebase") ("F" . "ff") ("s" . "sort") ("D" . "delete") ("r" . "refresh") ("q" . "quit")))))
     (3 ; Commits panel
-     '(("j/k" . "navigate") ("i" . "rebase") ("X" . "reset") ("A" . "amend") ("C" . "cherry-pick") ("R" . "revert") ("S" . "squash") ("F" . "fixup") ("t" . "tag") ("b" . "bisect") ("o" . "browser") ("r" . "refresh") ("q" . "quit")))
+     '(("j/k" . "navigate") ("i" . "rebase") ("g" . "graph") ("X" . "reset") ("A" . "amend") ("C" . "cherry-pick") ("R" . "revert") ("S" . "squash") ("F" . "fixup") ("t" . "tag") ("b" . "bisect") ("o" . "browser") ("r" . "refresh") ("q" . "quit")))
     (4 ; Stash panel
      '(("j/k" . "navigate") ("s" . "stash") ("g" . "pop") ("D" . "drop") ("r" . "refresh") ("q" . "quit")))
     (t ; Default
@@ -3088,6 +3111,13 @@
                                                        (log-entry-short-hash commit))
                                       :data (list :commit-hash (log-entry-hash commit))
                                       :buttons '("Start (bad)" "Cancel"))))))))
+       nil)
+      ;; Graph toggle - 'g' (when on commits panel, NOT in bisect mode)
+      ((and (key-event-char key) (char= (key-event-char key) #\g)
+            (= focused-idx 3) (not (bisect-mode view)))
+       (setf (graph-mode view) (not (graph-mode view)))
+       (log-command view (format nil "Graph mode: ~A" (if (graph-mode view) "on" "off")))
+       (update-main-content view)
        nil)
       ;; Bisect good - 'g' (when on commits panel in bisect mode)
       ((and (key-event-char key) (char= (key-event-char key) #\g)
