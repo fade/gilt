@@ -51,8 +51,12 @@ jobs:
       - name: Package binary
         run: tar -czvf gilt-${{ steps.tag.outputs.name }}-linux-x86_64.tar.gz gilt
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.name }}
-          files: gilt-${{ steps.tag.outputs.name }}-linux-x86_64.tar.gz
+      - name: Create release if it doesn't exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view ${{ steps.tag.outputs.name }} || gh release create ${{ steps.tag.outputs.name }} --title "${{ steps.tag.outputs.name }}" --generate-notes
+
+      - name: Upload binary to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload ${{ steps.tag.outputs.name }} gilt-${{ steps.tag.outputs.name }}-linux-x86_64.tar.gz --clobber
