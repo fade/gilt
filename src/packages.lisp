@@ -117,7 +117,10 @@
             #:+key-home+
             #:+key-end+
             #:+key-page-up+
-            #:+key-page-down+))
+            #:+key-page-down+
+            ;; Screen buffer
+            #:enter-alternate-screen
+            #:leave-alternate-screen))
 
 (defpackage #:gilt.ui
   (:use #:cl #:gilt.ansi #:gilt.terminal)
